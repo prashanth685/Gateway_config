@@ -25,7 +25,7 @@ const EMPTY_ROW = {
   parameterName: "",
   deviceName: "",
   unit: "",
-  slaveId: 1,
+  slaveId: "",
   functionCode: 3,
   address: 0,
   length: 1,
@@ -38,6 +38,7 @@ const EMPTY_ROW = {
 };
 
 const TABLE_COLUMNS = [
+  { key: "slNo", label: "Sl No", type: "text", width: "w-16", isSerial: true },
   { key: "parameterName", label: "Parameter Name", type: "text", width: "w-40" },
   { key: "deviceName", label: "Device Name", type: "text", width: "w-36" },
   { key: "unit", label: "Unit", type: "text", width: "w-20" },
@@ -66,12 +67,24 @@ export default function GatewayDetail() {
   // SSE connection for this gateway
   const { messages, connected: sseConnected, clearMessages } = useGatewaySSE(prefix);
 
-  // Config rows state
-  const [publishRows, setPublishRows] = useState([]);
-  const [readRows, setReadRows] = useState([]);
+  // Group configuration
+  const GROUPS_COUNT = 5;
+  const PARAMETERS_PER_GROUP = 200;
 
-  // WiFi config/status state
-  const [wifiRows, setWifiRows] = useState([]);
+  // Active group state (0-4, default to 0)
+  const [activeGroup, setActiveGroup] = useState(0);
+
+  // Enabled groups state (array of booleans, first group enabled by default)
+  const [enabledGroups, setEnabledGroups] = useState([true, false, false, false, false]);
+
+  // Config rows state per group
+  const [groupData, setGroupData] = useState(
+    Array.from({ length: GROUPS_COUNT }, () => ({
+      publishRows: [],
+      readRows: [],
+      wifiRows: [],
+    }))
+  );
 
   // Active view state ("publish" | "read" | "wifi")
   const [activeView, setActiveView] = useState("publish");
@@ -88,8 +101,19 @@ export default function GatewayDetail() {
   const [showWifiLiveBanner, setShowWifiLiveBanner] = useState(false);
 
   const [testStatus, setTestStatus] = useState(null);
+  const [testing, setTesting] = useState(false);
 
   const publishMutation = trpc.mqtt.publish.useMutation();
+
+  // Helper functions to get/set data for active group
+  const getActiveGroupData = () => groupData[activeGroup];
+  const updateActiveGroupData = (updater) => {
+    setGroupData(prev => {
+      const newData = [...prev];
+      newData[activeGroup] = updater(newData[activeGroup]);
+      return newData;
+    });
+  };
 
   // Handle incoming SSE messages (ReadConfig & Wifi responses)
   useEffect(() => {
@@ -100,8 +124,12 @@ export default function GatewayDetail() {
       const payload = latestMessage.payload.trim();
       const topic = (latestMessage.topic || "").toLowerCase();
 
-      // 1. Modbus Config response (ends with /readconfig/res)
-      if (topic.endsWith("/readconfig/res")) {
+      // 1. Modbus Config response (ends with /readconfig/res or /readconfig/GroupX/res)
+      if (topic.endsWith("/readconfig/res") || topic.match(/\/readconfig\/group\d+\/res$/i)) {
+        // Extract group number from topic if present
+        const groupMatch = topic.match(/\/group(\d+)\/res$/i);
+        const responseGroup = groupMatch ? parseInt(groupMatch[1]) - 1 : activeGroup;
+
         setActiveView("read");
         try {
           let parsedRows = [];
@@ -173,9 +201,16 @@ export default function GatewayDetail() {
             }
           }
 
-          // Append batch data to existing readRows (for batch-wise reading)
+          // Append batch data to existing readRows for the specific group
           if (parsedRows.length > 0) {
-            setReadRows(prev => [...prev, ...parsedRows]);
+            setGroupData(prev => {
+              const newData = [...prev];
+              newData[responseGroup] = {
+                ...newData[responseGroup],
+                readRows: [...newData[responseGroup].readRows, ...parsedRows]
+              };
+              return newData;
+            });
           }
 
           // Check if all batches are received
@@ -186,8 +221,12 @@ export default function GatewayDetail() {
         }
       }
 
-      // 2. Wifi response (ends with /wifi/res)
-      if (topic.endsWith("/wifi/res")) {
+      // 2. Wifi response (ends with /wifi/res or /wifi/GroupX/res)
+      if (topic.endsWith("/wifi/res") || topic.match(/\/wifi\/group\d+\/res$/i)) {
+        // Extract group number from topic if present
+        const groupMatch = topic.match(/\/group(\d+)\/res$/i);
+        const responseGroup = groupMatch ? parseInt(groupMatch[1]) - 1 : activeGroup;
+
         setActiveView("wifi");
         try {
           // Option 1: Parse as JSON array
@@ -201,7 +240,14 @@ export default function GatewayDetail() {
                 location: String(r.Location ?? r.location ?? ""),
                 delay: String(r.Delay ?? r.delay ?? ""),
               }));
-              setWifiRows(validRows);
+              setGroupData(prev => {
+                const newData = [...prev];
+                newData[responseGroup] = {
+                  ...newData[responseGroup],
+                  wifiRows: validRows
+                };
+                return newData;
+              });
               setReadingWifi(false);
               setShowWifiLiveBanner(true);
               return;
@@ -211,13 +257,20 @@ export default function GatewayDetail() {
           // Option 2: Parse as single JSON object
           if (payload.startsWith("{") && payload.endsWith("}")) {
             const r = JSON.parse(payload);
-            setWifiRows([{
-              publishConfig: String(r.PublishConfig ?? r.publishConfig ?? r.publish_config ?? ""),
-              readConfig: String(r.ReadConfig ?? r.readConfig ?? r.read_config ?? ""),
-              wifi: String(r.WiFi ?? r.wifi ?? ""),
-              location: String(r.Location ?? r.location ?? ""),
-              delay: String(r.Delay ?? r.delay ?? ""),
-            }]);
+            setGroupData(prev => {
+              const newData = [...prev];
+              newData[responseGroup] = {
+                ...newData[responseGroup],
+                wifiRows: [{
+                  publishConfig: String(r.PublishConfig ?? r.publishConfig ?? r.publish_config ?? ""),
+                  readConfig: String(r.ReadConfig ?? r.readConfig ?? r.read_config ?? ""),
+                  wifi: String(r.WiFi ?? r.wifi ?? ""),
+                  location: String(r.Location ?? r.location ?? ""),
+                  delay: String(r.Delay ?? r.delay ?? ""),
+                }]
+              };
+              return newData;
+            });
             setReadingWifi(false);
             setShowWifiLiveBanner(true);
             return;
@@ -242,7 +295,14 @@ export default function GatewayDetail() {
                 delay: items[i+4],
               });
             }
-            setWifiRows(parsedRows);
+            setGroupData(prev => {
+              const newData = [...prev];
+              newData[responseGroup] = {
+                ...newData[responseGroup],
+                wifiRows: parsedRows
+              };
+              return newData;
+            });
             setReadingWifi(false);
             setShowWifiLiveBanner(true);
           }
@@ -250,8 +310,28 @@ export default function GatewayDetail() {
           console.error("Failed to parse wifi response:", err);
         }
       }
+
+      // 3. Test response (ends with /test/res or /Test/res)
+      if (topic.endsWith("/test/res") || topic.endsWith("/Test/res")) {
+        // Clear the timeout since we got a response
+        if (window.testTimeout) {
+          clearTimeout(window.testTimeout);
+          window.testTimeout = null;
+        }
+
+        setTesting(false);
+
+        // Check if response is "1" for connected
+        if (payload === "1") {
+          setTestStatus("connected");
+          toast.success("Connected");
+        } else {
+          setTestStatus("disconnected");
+          toast.error("Disconnected");
+        }
+      }
     }
-  }, [messages]);
+  }, [messages, activeGroup, testing]);
 
   // Handle batch reading completion
   useEffect(() => {
@@ -268,44 +348,57 @@ export default function GatewayDetail() {
 
   // Add a new row
   const addRow = useCallback(() => {
-    if (activeView === "publish") {
-      setPublishRows((prev) => [...prev, { ...EMPTY_ROW }]);
-    } else if (activeView === "read") {
-      setReadRows((prev) => [...prev, { ...EMPTY_ROW }]);
-    }
-  }, [activeView]);
+    updateActiveGroupData(prev => {
+      if (activeView === "publish") {
+        if (prev.publishRows.length >= PARAMETERS_PER_GROUP) {
+          toast.error(`Maximum ${PARAMETERS_PER_GROUP} parameters allowed per group`);
+          return prev;
+        }
+        return { ...prev, publishRows: [...prev.publishRows, { ...EMPTY_ROW }] };
+      } else if (activeView === "read") {
+        if (prev.readRows.length >= PARAMETERS_PER_GROUP) {
+          toast.error(`Maximum ${PARAMETERS_PER_GROUP} parameters allowed per group`);
+          return prev;
+        }
+        return { ...prev, readRows: [...prev.readRows, { ...EMPTY_ROW }] };
+      }
+      return prev;
+    });
+  }, [activeView, updateActiveGroupData]);
 
   // Remove a row
   const removeRow = useCallback((index) => {
-    if (activeView === "publish") {
-      setPublishRows((prev) => prev.filter((_, i) => i !== index));
-    } else if (activeView === "read") {
-      setReadRows((prev) => prev.filter((_, i) => i !== index));
-    }
-  }, [activeView]);
+    updateActiveGroupData(prev => {
+      if (activeView === "publish") {
+        return { ...prev, publishRows: prev.publishRows.filter((_, i) => i !== index) };
+      } else if (activeView === "read") {
+        return { ...prev, readRows: prev.readRows.filter((_, i) => i !== index) };
+      }
+      return prev;
+    });
+  }, [activeView, updateActiveGroupData]);
 
   // Update a cell value
   const updateCell = useCallback(
     (index, key, value) => {
-      if (activeView === "publish") {
-        setPublishRows((prev) => {
-          const updated = [...prev];
+      updateActiveGroupData(prev => {
+        if (activeView === "publish") {
+          const updated = [...prev.publishRows];
           const row = { ...updated[index] };
           row[key] = value;
           updated[index] = row;
-          return updated;
-        });
-      } else if (activeView === "read") {
-        setReadRows((prev) => {
-          const updated = [...prev];
+          return { ...prev, publishRows: updated };
+        } else if (activeView === "read") {
+          const updated = [...prev.readRows];
           const row = { ...updated[index] };
           row[key] = value;
           updated[index] = row;
-          return updated;
-        });
-      }
+          return { ...prev, readRows: updated };
+        }
+        return prev;
+      });
     },
-    [activeView]
+    [activeView, updateActiveGroupData]
   );
 
   // Helper function to create batches based on the pattern: 200, 200, 200, 200, 200, then repeat
@@ -330,9 +423,12 @@ export default function GatewayDetail() {
     return batches;
   };
 
-  // Publish Config (Setconfig) - Batch-wise publishing
+  // Publish Config (Setconfig) - Batch-wise publishing for active group
   const handlePublish = async () => {
-    if (!prefix || publishRows.length === 0) return;
+    if (!prefix) return;
+    const activeData = getActiveGroupData();
+    if (activeData.publishRows.length === 0) return;
+
     setActiveView("publish");
     setPublishing(true);
     setPublishSuccess(false);
@@ -360,20 +456,23 @@ export default function GatewayDetail() {
       return [param, device, slave, func, addr, len, dType, scale, baud, dBits, parityStr, sBits];
     };
 
+    // Limit to PARAMETERS_PER_GROUP (200) per group
+    const rowsToPublish = activeData.publishRows.slice(0, PARAMETERS_PER_GROUP);
+
     // Create batches
-    const batches = createBatches(publishRows.length);
+    const batches = createBatches(rowsToPublish.length);
     setPublishProgress({ current: 0, total: batches.length });
 
     try {
-      // Publish each batch sequentially
+      // Publish each batch sequentially with group prefix
       for (let i = 0; i < batches.length; i++) {
         const batch = batches[i];
-        const batchRows = publishRows.slice(batch.start, batch.end);
+        const batchRows = rowsToPublish.slice(batch.start, batch.end);
         const allValues = batchRows.flatMap(getRowValues);
         const payloadString = allValues.map((v) => `"${v}"`).join(",");
 
         await publishMutation.mutateAsync({
-          topic: `${prefix}/Setconfig`,
+          topic: `${prefix}/Setconfig/Group${activeGroup + 1}`,
           payload: payloadString,
         });
 
@@ -396,28 +495,30 @@ export default function GatewayDetail() {
     }
   };
 
-  // Read Config (trigger ReadConfig → subscribe to ReadConfig/Res) - Batch-wise reading
+  // Read Config (trigger ReadConfig → subscribe to ReadConfig/Res) - Batch-wise reading for active group
   const handleReadConfig = async () => {
     if (!prefix) return;
     setActiveView("read");
     setReading(true);
     setShowLiveBanner(true);
     clearMessages();
-    setReadRows([]); // Clear previous data
 
-    // Create batches for reading
-    const batches = createBatches(1000); // Assuming max 1000 parameters to read
+    // Clear previous data for active group
+    updateActiveGroupData(prev => ({ ...prev, readRows: [] }));
+
+    // Create batches for reading (limit to PARAMETERS_PER_GROUP)
+    const batches = createBatches(PARAMETERS_PER_GROUP);
     setReadProgress({ current: 0, total: batches.length });
 
     try {
-      // Send read requests for each batch sequentially
+      // Send read requests for each batch sequentially with group prefix
       for (let i = 0; i < batches.length; i++) {
         const batch = batches[i];
         // Send batch range as payload (e.g., "1-200", "200-400", etc.)
         const payload = `${batch.start + 1}-${batch.end}`;
 
         await publishMutation.mutateAsync({
-          topic: `${prefix}/Readconfig`,
+          topic: `${prefix}/Readconfig/Group${activeGroup + 1}`,
           payload: payload,
         });
 
@@ -437,16 +538,19 @@ export default function GatewayDetail() {
     }
   };
 
-  // Wifi Trigger (trigger Wifi → subscribe to Wifi/res)
+  // Wifi Trigger (trigger Wifi → subscribe to Wifi/res) for active group
   const handleWifi = async () => {
     if (!prefix) return;
     setActiveView("wifi");
     setReadingWifi(true);
     setShowWifiLiveBanner(true);
-    setWifiRows([]);
+
+    // Clear previous data for active group
+    updateActiveGroupData(prev => ({ ...prev, wifiRows: [] }));
+
     try {
       await publishMutation.mutateAsync({
-        topic: `${prefix}/Wifi`,
+        topic: `${prefix}/Wifi/Group${activeGroup + 1}`,
         payload: "1",
       });
     } catch (err) {
@@ -456,26 +560,60 @@ export default function GatewayDetail() {
   };
 
   // Test connection
-  const handleTest = () => {
-    setTestStatus("connected");
-    toast.success("Connected");
-    setTimeout(() => setTestStatus(null), 3000);
+  const handleTest = async () => {
+    if (!prefix) {
+      toast.error("Gateway prefix not available");
+      return;
+    }
+
+    // Clear any existing timeout
+    if (window.testTimeout) {
+      clearTimeout(window.testTimeout);
+      window.testTimeout = null;
+    }
+
+    setTesting(true);
+    setTestStatus(null);
+
+    try {
+      // Publish test message
+      await publishMutation.mutateAsync({
+        topic: `${prefix}/Test`,
+        payload: "1",
+      });
+
+      // Set timeout for no response
+      const timeout = setTimeout(() => {
+        setTesting(false);
+        setTestStatus("disconnected");
+        toast.error("Disconnected");
+      }, 5000); // 5 second timeout
+
+      // Store timeout ID to clear it if response arrives
+      window.testTimeout = timeout;
+    } catch (err) {
+      console.error("Test failed:", err);
+      setTesting(false);
+      setTestStatus("disconnected");
+      toast.error("Disconnected");
+    }
   };
 
   // Export to Excel
   const handleSave = () => {
+    const activeData = getActiveGroupData();
     let data = [];
     let fileName = "";
 
     if (activeView === "publish") {
-      data = publishRows;
-      fileName = `${prefix}_publish_config.xlsx`;
+      data = activeData.publishRows;
+      fileName = `${prefix}_Group${activeGroup + 1}_publish_config.xlsx`;
     } else if (activeView === "read") {
-      data = readRows;
-      fileName = `${prefix}_read_config.xlsx`;
+      data = activeData.readRows;
+      fileName = `${prefix}_Group${activeGroup + 1}_read_config.xlsx`;
     } else if (activeView === "wifi") {
-      data = wifiRows;
-      fileName = `${prefix}_wifi_status.xlsx`;
+      data = activeData.wifiRows;
+      fileName = `${prefix}_Group${activeGroup + 1}_wifi_status.xlsx`;
     }
 
     if (data.length === 0) {
@@ -509,6 +647,11 @@ export default function GatewayDetail() {
           return;
         }
 
+        // Warn if imported data exceeds limit
+        if (jsonData.length > PARAMETERS_PER_GROUP) {
+          toast.warning(`Excel file contains ${jsonData.length} rows, but only ${PARAMETERS_PER_GROUP} will be imported (maximum per group)`);
+        }
+
         // Validate and transform data based on active view
         if (activeView === "publish" || activeView === "read") {
           const validRows = jsonData.map((row) => ({
@@ -527,10 +670,13 @@ export default function GatewayDetail() {
             stopBits: Number(row.stopBits || row.StopBits || 1),
           }));
 
+          // Limit to PARAMETERS_PER_GROUP
+          const limitedRows = validRows.slice(0, PARAMETERS_PER_GROUP);
+
           if (activeView === "publish") {
-            setPublishRows(validRows);
+            updateActiveGroupData(prev => ({ ...prev, publishRows: limitedRows }));
           } else {
-            setReadRows(validRows);
+            updateActiveGroupData(prev => ({ ...prev, readRows: limitedRows }));
           }
         } else if (activeView === "wifi") {
           const validRows = jsonData.map((row) => ({
@@ -540,7 +686,7 @@ export default function GatewayDetail() {
             location: String(row.location || row.Location || ""),
             delay: String(row.delay || row.Delay || ""),
           }));
-          setWifiRows(validRows);
+          updateActiveGroupData(prev => ({ ...prev, wifiRows: validRows }));
         }
 
         toast.success(`Imported ${jsonData.length} rows from Excel`);
@@ -575,7 +721,7 @@ export default function GatewayDetail() {
               <h1 className="text-2xl font-semibold text-[#212529] tracking-tight">
                 {gateway.data?.prefix ?? "Loading..."}
               </h1>
-              {testStatus === "connected" ? (
+              {/* {testStatus === "connected" ? (
                 <span className="inline-flex items-center gap-1.5 text-xs font-medium bg-[#E6F4EA] text-[#198754] px-2.5 py-1 rounded-full">
                   <Wifi className="w-3 h-3" />
                   Connected
@@ -595,7 +741,7 @@ export default function GatewayDetail() {
                   <WifiOff className="w-3 h-3" />
                   Disconnected
                 </span>
-              )}
+              )} */}
             </div>
             {gateway.data?.company && (
               <p className="text-sm text-[#6C757D] mt-1">
@@ -603,17 +749,65 @@ export default function GatewayDetail() {
               </p>
             )}
           </div>
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={handleTest}
+              disabled={testing || !prefix}
+              className="h-10 px-5 bg-[#4361EE] hover:bg-[#3A53D0] text-white disabled:opacity-50 cursor-pointer"
+            >
+              {testing ? (
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+              ) : null}
+              {testing ? "Testing..." : "Test"}
+            </Button>
+            {testStatus && (
+              <span className={`text-sm font-medium ${
+                testStatus === "connected" ? "text-green-600" : "text-red-600"
+              }`}>
+                {testStatus === "connected" ? "✓ Connected" : "✗ Disconnected"}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center gap-3 mb-6">
-          <Button
-            onClick={handleTest}
-            className="h-10 px-5 bg-[#4361EE] hover:bg-[#3A53D0] text-white disabled:opacity-50 cursor-pointer"
-          >
-            Test
-          </Button>
+        <div className="flex justify-end mt-6">
+
         </div>
+
+        {/* Group Selection Tabs */}
+        <div className="mb-4">
+          <div className="flex items-center gap-2">
+            {Array.from({ length: GROUPS_COUNT }).map((_, index) => (
+              <button
+                key={index}
+                onClick={() => setActiveGroup(index)}
+                disabled={!enabledGroups[index]}
+                className={`px-4 py-2 text-sm font-medium transition-all cursor-pointer rounded-lg ${
+                  activeGroup === index
+                    ? "bg-[#4361EE] text-white shadow-lg ring-2 ring-[#4361EE] ring-offset-2 scale-105"
+                    : enabledGroups[index]
+                    ? "bg-white text-[#6C757D] hover:bg-[#F8F9FA] border border-[#E9ECEF]"
+                    : "bg-[#F8F9FA] text-[#ADB5BD] border border-[#E9ECEF] cursor-not-allowed"
+                }`}
+              >
+                {activeGroup === index && (
+                  <span className="inline-flex items-center gap-1">
+                    <Check className="w-3 h-3" />
+                  </span>
+                )}
+                Group {index + 1}
+                {activeGroup === index && (
+                  <span className="ml-1 text-xs opacity-80">(Active)</span>
+                )}
+                {!enabledGroups[index] && " (Disabled)"}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Navigation Tabs & Tables Container */}
+        <div className="border-4 border-double border-[#E9ECEF] rounded-xl p-4">
 
         {/* Navigation Tabs */}
 
@@ -690,7 +884,7 @@ export default function GatewayDetail() {
           <div className="mb-4 flex items-center gap-2 text-xs bg-[#E0F7FA] border border-[#0DCAF0] text-[#0DCAF0] px-4 py-2.5 rounded-lg">
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>
-              Showing live data from {prefix}/Readconfig/res — not saved to
+              Showing live data from {prefix}/Readconfig/Group{activeGroup + 1}/res — Group {activeGroup + 1} — not saved to
               database
             </span>
           </div>
@@ -700,7 +894,7 @@ export default function GatewayDetail() {
           <div className="mb-4 flex items-center gap-2 text-xs bg-[#E8F5E9] border border-[#2E7D32] text-[#2E7D32] px-4 py-2.5 rounded-lg animate-fadeIn">
             <AlertCircle className="w-4 h-4 shrink-0 text-[#2E7D32]" />
             <span>
-              Showing live WiFi & System status from {prefix}/Wifi/res — not saved to
+              Showing live WiFi & System status from {prefix}/Wifi/Group{activeGroup + 1}/res — Group {activeGroup + 1} — not saved to
               database
             </span>
           </div>
@@ -735,7 +929,7 @@ export default function GatewayDetail() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#E9ECEF]">
-                  {publishRows.length === 0 && (
+                  {getActiveGroupData().publishRows.length === 0 && (
                     <tr>
                       <td
                         colSpan={TABLE_COLUMNS.length + 1}
@@ -747,14 +941,23 @@ export default function GatewayDetail() {
                       </td>
                     </tr>
                   )}
-                  {publishRows.map((row, index) => (
+                  {getActiveGroupData().publishRows.map((row, index) => (
                     <tr
                       key={index}
                       className="hover:bg-[#F8F9FA] transition-colors"
                     >
                       {TABLE_COLUMNS.map((col) => {
                         const cellValue = row[col.key] ?? "";
-                        
+
+                        // Handle serial number column (read-only, auto-increment)
+                        if (col.isSerial) {
+                          return (
+                            <td key={col.key} className={`${col.width} px-2 py-2 text-center`}>
+                              <span className="text-sm text-[#212529] font-medium">{index + 1}</span>
+                            </td>
+                          );
+                        }
+
                         if (col.key === "dataType") {
                           return (
                             <td key={col.key} className={`${col.width} px-2 py-2 text-center`}>
@@ -877,15 +1080,19 @@ export default function GatewayDetail() {
             <div className="px-4 py-3 border-t border-[#E9ECEF]">
               <button
                 onClick={addRow}
-                className="inline-flex items-center gap-1.5 text-sm text-[#4361EE] hover:text-[#3A53D0] font-medium transition-colors cursor-pointer"
+                disabled={getActiveGroupData().publishRows.length >= PARAMETERS_PER_GROUP}
+                className="inline-flex items-center gap-1.5 text-sm text-[#4361EE] hover:text-[#3A53D0] font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Plus className="w-4 h-4" />
                 Add Row
               </button>
+              <span className="ml-4 text-xs text-[#6C757D]">
+                {getActiveGroupData().publishRows.length} / {PARAMETERS_PER_GROUP}
+              </span>
               <div className="flex justify-end">
                 <Button
                   onClick={handlePublish}
-                  disabled={publishing || publishRows.length === 0 || !prefix}
+                  disabled={publishing || getActiveGroupData().publishRows.length === 0 || !prefix}
                   className="h-10 px-5 bg-[#4361EE] hover:bg-[#3A53D0] text-white disabled:opacity-50 cursor-pointer"
                 >
                   {publishing ? (
@@ -902,7 +1109,7 @@ export default function GatewayDetail() {
                 </Button>
                 <Button
                   onClick={handleSave}
-                  disabled={publishRows.length === 0}
+                  disabled={getActiveGroupData().publishRows.length === 0}
                   className="h-10 px-5 bg-[#4361EE] hover:bg-[#3A53D0] text-white disabled:opacity-50 cursor-pointer ml-2"
                 >
                   <Save className="w-4 h-4 mr-2" />
@@ -935,7 +1142,7 @@ export default function GatewayDetail() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#E9ECEF]">
-                  {readRows.length === 0 && !reading && (
+                  {getActiveGroupData().readRows.length === 0 && !reading && (
                     <tr>
                       <td
                         colSpan={TABLE_COLUMNS.length + 1}
@@ -947,7 +1154,7 @@ export default function GatewayDetail() {
                       </td>
                     </tr>
                   )}
-                  {reading && readRows.length === 0 && (
+                  {reading && getActiveGroupData().readRows.length === 0 && (
                     <tr>
                       <td
                         colSpan={TABLE_COLUMNS.length + 1}
@@ -960,13 +1167,22 @@ export default function GatewayDetail() {
                       </td>
                     </tr>
                   )}
-                  {readRows.map((row, index) => (
+                  {getActiveGroupData().readRows.map((row, index) => (
                     <tr
                       key={index}
                       className="hover:bg-[#F8F9FA] transition-colors"
                     >
                       {TABLE_COLUMNS.map((col) => {
                         const cellValue = row[col.key] ?? "";
+
+                        // Handle serial number column (read-only, auto-increment)
+                        if (col.isSerial) {
+                          return (
+                            <td key={col.key} className={`${col.width} px-2 py-2 text-center`}>
+                              <span className="text-sm text-[#212529] font-medium">{index + 1}</span>
+                            </td>
+                          );
+                        }
 
                         if (col.key === "dataType") {
                           return (
@@ -1090,11 +1306,15 @@ export default function GatewayDetail() {
             <div className="px-4 py-3 border-t border-[#E9ECEF]">
               <button
                 onClick={addRow}
-                className="inline-flex items-center gap-1.5 text-sm text-[#4361EE] hover:text-[#3A53D0] font-medium transition-colors cursor-pointer"
+                disabled={getActiveGroupData().readRows.length >= PARAMETERS_PER_GROUP}
+                className="inline-flex items-center gap-1.5 text-sm text-[#4361EE] hover:text-[#3A53D0] font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Plus className="w-4 h-4" />
                 Add Row
               </button>
+              <span className="ml-4 text-xs text-[#6C757D]">
+                {getActiveGroupData().readRows.length} / {PARAMETERS_PER_GROUP}
+              </span>
               <div className="flex justify-end">
                 <Button
                   onClick={handleReadConfig}
@@ -1111,7 +1331,7 @@ export default function GatewayDetail() {
                 </Button>
                 <Button
                   onClick={handleSave}
-                  disabled={readRows.length === 0}
+                  disabled={getActiveGroupData().readRows.length === 0}
                   className="h-10 px-5 bg-[#4361EE] hover:bg-[#3A53D0] text-white disabled:opacity-50 cursor-pointer ml-2"
                 >
                   <Save className="w-4 h-4 mr-2" />
@@ -1153,7 +1373,7 @@ export default function GatewayDetail() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#E9ECEF]">
-                    {wifiRows.length === 0 && !readingWifi && (
+                    {getActiveGroupData().wifiRows.length === 0 && !readingWifi && (
                       <tr>
                         <td
                           colSpan={5}
@@ -1164,7 +1384,7 @@ export default function GatewayDetail() {
                         </td>
                       </tr>
                     )}
-                    {readingWifi && wifiRows.length === 0 && (
+                    {readingWifi && getActiveGroupData().wifiRows.length === 0 && (
                       <tr>
                         <td colSpan={5} className="px-4 py-12 text-center">
                           <div className="flex items-center justify-center gap-2 text-sm text-[#6C757D]">
@@ -1174,7 +1394,7 @@ export default function GatewayDetail() {
                         </td>
                       </tr>
                     )}
-                    {wifiRows.map((row, index) => (
+                    {getActiveGroupData().wifiRows.map((row, index) => (
                       <tr
                         key={index}
                         className="hover:bg-[#F8F9FA] transition-colors"
@@ -1202,7 +1422,7 @@ export default function GatewayDetail() {
               <div className="px-4 py-3 border-t border-[#E9ECEF] flex justify-end">
                 <Button
                   onClick={handleSave}
-                  disabled={wifiRows.length === 0}
+                  disabled={getActiveGroupData().wifiRows.length === 0}
                   className="h-10 px-5 bg-[#4361EE] hover:bg-[#3A53D0] text-white disabled:opacity-50 cursor-pointer"
                 >
                   <Save className="w-4 h-4 mr-2" />
@@ -1212,6 +1432,7 @@ export default function GatewayDetail() {
             </div>
           </div>
         )}
+        </div>
       </main>
     </div>
   );
