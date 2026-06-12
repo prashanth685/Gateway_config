@@ -89,6 +89,21 @@ export default function GatewayDetail() {
   // Active view state ("publish" | "read" | "wifi")
   const [activeView, setActiveView] = useState("publish");
 
+  // Add beforeunload event listener to warn user before leaving
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      e.preventDefault();
+      e.returnValue = ""; // Chrome requires returnValue to be set
+      return ""; // For other browsers
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, []);
+
   // UI states
   const [publishing, setPublishing] = useState(false);
   const [publishSuccess, setPublishSuccess] = useState(false);
@@ -114,6 +129,12 @@ export default function GatewayDetail() {
       return newData;
     });
   };
+
+  // Get unique dropdown options dynamically for deviceName and slaveId
+  const activeData = getActiveGroupData();
+  const currentRows = activeView === "publish" ? activeData.publishRows : activeData.readRows;
+  const deviceOptions = [...new Set(currentRows.map(r => r.deviceName).filter(Boolean))];
+  const slaveOptions = [...new Set(currentRows.map(r => r.slaveId).filter(Boolean))];
 
   // Handle incoming SSE messages (ReadConfig & Wifi responses)
   useEffect(() => {
@@ -340,11 +361,22 @@ export default function GatewayDetail() {
       const timeout = setTimeout(() => {
         setReading(false);
         setReadProgress({ current: 0, total: 0 });
+
+        // Auto-enable and switch to next group after completing current group
+        const nextGroup = activeGroup + 1;
+        if (nextGroup < GROUPS_COUNT) {
+          setEnabledGroups(prev => {
+            const newEnabled = [...prev];
+            newEnabled[nextGroup] = true;
+            return newEnabled;
+          });
+          setActiveGroup(nextGroup);
+        }
       }, 3000); // Wait 3 seconds for all responses to arrive
 
       return () => clearTimeout(timeout);
     }
-  }, [readProgress, reading]);
+  }, [readProgress, reading, activeGroup]);
 
   // Add a new row
   const addRow = useCallback(() => {
@@ -354,17 +386,21 @@ export default function GatewayDetail() {
           toast.error(`Maximum ${PARAMETERS_PER_GROUP} parameters allowed per group`);
           return prev;
         }
-        return { ...prev, publishRows: [...prev.publishRows, { ...EMPTY_ROW }] };
+        const parameterNumber = (activeGroup * PARAMETERS_PER_GROUP) + prev.publishRows.length + 1;
+        const newParameterName = `P${parameterNumber}`;
+        return { ...prev, publishRows: [...prev.publishRows, { ...EMPTY_ROW, parameterName: newParameterName }] };
       } else if (activeView === "read") {
         if (prev.readRows.length >= PARAMETERS_PER_GROUP) {
           toast.error(`Maximum ${PARAMETERS_PER_GROUP} parameters allowed per group`);
           return prev;
         }
-        return { ...prev, readRows: [...prev.readRows, { ...EMPTY_ROW }] };
+        const parameterNumber = (activeGroup * PARAMETERS_PER_GROUP) + prev.readRows.length + 1;
+        const newParameterName = `P${parameterNumber}`;
+        return { ...prev, readRows: [...prev.readRows, { ...EMPTY_ROW, parameterName: newParameterName }] };
       }
       return prev;
     });
-  }, [activeView, updateActiveGroupData]);
+  }, [activeView, updateActiveGroupData, activeGroup]);
 
   // Remove a row
   const removeRow = useCallback((index) => {
@@ -382,20 +418,54 @@ export default function GatewayDetail() {
   const updateCell = useCallback(
     (index, key, value) => {
       updateActiveGroupData(prev => {
+        let updated;
+        let rows;
+        
         if (activeView === "publish") {
-          const updated = [...prev.publishRows];
-          const row = { ...updated[index] };
-          row[key] = value;
-          updated[index] = row;
-          return { ...prev, publishRows: updated };
+          updated = [...prev.publishRows];
+          rows = prev.publishRows;
         } else if (activeView === "read") {
-          const updated = [...prev.readRows];
-          const row = { ...updated[index] };
-          row[key] = value;
-          updated[index] = row;
+          updated = [...prev.readRows];
+          rows = prev.readRows;
+        } else {
+          return prev;
+        }
+
+        const row = { ...updated[index] };
+        row[key] = value;
+        updated[index] = row;
+
+        // Auto-fill logic: If slaveId entered → auto-fill deviceName if exists
+        if (key === "slaveId") {
+          const match = rows.find(r => r.slaveId === value && r.deviceName);
+          if (match?.deviceName) {
+            updated[index].deviceName = match.deviceName;
+          }
+        }
+
+        // Auto-fill logic: If deviceName entered → auto-fill slaveId if exists
+        if (key === "deviceName") {
+          const match = rows.find(r => r.deviceName === value && r.slaveId);
+          if (match?.slaveId) {
+            updated[index].slaveId = match.slaveId;
+          }
+        }
+
+        // Auto-fill logic: If dataType changed → auto-set length (Int=1, Float=2)
+        if (key === "dataType") {
+          const dataTypeLower = String(value).toLowerCase();
+          if (dataTypeLower === "int") {
+            updated[index].length = 1;
+          } else if (dataTypeLower === "float") {
+            updated[index].length = 2;
+          }
+        }
+
+        if (activeView === "publish") {
+          return { ...prev, publishRows: updated };
+        } else {
           return { ...prev, readRows: updated };
         }
-        return prev;
       });
     },
     [activeView, updateActiveGroupData]
@@ -472,7 +542,7 @@ export default function GatewayDetail() {
         const payloadString = allValues.map((v) => `"${v}"`).join(",");
 
         await publishMutation.mutateAsync({
-          topic: `${prefix}/Setconfig/Group${activeGroup + 1}`,
+          topic: `${prefix}/Setconfig/G1${activeGroup + 1}`,
           payload: payloadString,
         });
 
@@ -487,6 +557,17 @@ export default function GatewayDetail() {
 
       setPublishSuccess(true);
       setTimeout(() => setPublishSuccess(false), 2000);
+
+      // Auto-enable and switch to next group after completing current group
+      const nextGroup = activeGroup + 1;
+      if (nextGroup < GROUPS_COUNT) {
+        setEnabledGroups(prev => {
+          const newEnabled = [...prev];
+          newEnabled[nextGroup] = true;
+          return newEnabled;
+        });
+        setActiveGroup(nextGroup);
+      }
     } catch (err) {
       console.error("Publish failed:", err);
     } finally {
@@ -518,7 +599,7 @@ export default function GatewayDetail() {
         const payload = `${batch.start + 1}-${batch.end}`;
 
         await publishMutation.mutateAsync({
-          topic: `${prefix}/Readconfig/Group${activeGroup + 1}`,
+          topic: `${prefix}/Readconfig/G1${activeGroup + 1}`,
           payload: payload,
         });
 
@@ -550,7 +631,7 @@ export default function GatewayDetail() {
 
     try {
       await publishMutation.mutateAsync({
-        topic: `${prefix}/Wifi/Group${activeGroup + 1}`,
+        topic: `${prefix}/Wifi/G1${activeGroup + 1}`,
         payload: "1",
       });
     } catch (err) {
@@ -607,13 +688,13 @@ export default function GatewayDetail() {
 
     if (activeView === "publish") {
       data = activeData.publishRows;
-      fileName = `${prefix}_Group${activeGroup + 1}_publish_config.xlsx`;
+      fileName = `${prefix}_G1${activeGroup + 1}_publish_config.xlsx`;
     } else if (activeView === "read") {
       data = activeData.readRows;
-      fileName = `${prefix}_Group${activeGroup + 1}_read_config.xlsx`;
+      fileName = `${prefix}_G1${activeGroup + 1}_read_config.xlsx`;
     } else if (activeView === "wifi") {
       data = activeData.wifiRows;
-      fileName = `${prefix}_Group${activeGroup + 1}_wifi_status.xlsx`;
+      fileName = `${prefix}_G1${activeGroup + 1}_wifi_status.xlsx`;
     }
 
     if (data.length === 0) {
@@ -884,7 +965,7 @@ export default function GatewayDetail() {
           <div className="mb-4 flex items-center gap-2 text-xs bg-[#E0F7FA] border border-[#0DCAF0] text-[#0DCAF0] px-4 py-2.5 rounded-lg">
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>
-              Showing live data from {prefix}/Readconfig/Group{activeGroup + 1}/res — Group {activeGroup + 1} — not saved to
+              Showing live data from {prefix}/Readconfig/G{activeGroup + 1}/res — G {activeGroup + 1} — not saved to
               database
             </span>
           </div>
@@ -1036,6 +1117,54 @@ export default function GatewayDetail() {
                                 <option value="15">15 (Write Coils)</option>
                                 <option value="16">16 (Write Regs)</option>
                               </select>
+                            </td>
+                          );
+                        }
+
+                        if (col.key === "deviceName") {
+                          return (
+                            <td key={col.key} className={`${col.width} px-2 py-2 text-center`}>
+                              <input
+                                list={`device-list-${index}`}
+                                type="text"
+                                value={cellValue}
+                                placeholder="Type or select device"
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  updateCell(index, col.key, val);
+                                }}
+                                className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
+                              />
+                              <datalist id={`device-list-${index}`}>
+                                {deviceOptions.map((opt, i) => (
+                                  <option key={i} value={opt} />
+                                ))}
+                              </datalist>
+                            </td>
+                          );
+                        }
+
+                        if (col.key === "slaveId") {
+                          return (
+                            <td key={col.key} className={`${col.width} px-2 py-2 text-center`}>
+                              <input
+                                list={`slave-list-${index}`}
+                                type="text"
+                                value={cellValue}
+                                placeholder="Type or select slave id"
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  if (/^-?\d*\.?\d*$/.test(val)) {
+                                    updateCell(index, col.key, val);
+                                  }
+                                }}
+                                className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
+                              />
+                              <datalist id={`slave-list-${index}`}>
+                                {slaveOptions.map((opt, i) => (
+                                  <option key={i} value={opt} />
+                                ))}
+                              </datalist>
                             </td>
                           );
                         }
@@ -1262,6 +1391,54 @@ export default function GatewayDetail() {
                                 <option value="15">15 (Write Coils)</option>
                                 <option value="16">16 (Write Regs)</option>
                               </select>
+                            </td>
+                          );
+                        }
+
+                        if (col.key === "deviceName") {
+                          return (
+                            <td key={col.key} className={`${col.width} px-2 py-2 text-center`}>
+                              <input
+                                list={`device-list-${index}`}
+                                type="text"
+                                value={cellValue}
+                                placeholder="Type or select device"
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  updateCell(index, col.key, val);
+                                }}
+                                className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
+                              />
+                              <datalist id={`device-list-${index}`}>
+                                {deviceOptions.map((opt, i) => (
+                                  <option key={i} value={opt} />
+                                ))}
+                              </datalist>
+                            </td>
+                          );
+                        }
+
+                        if (col.key === "slaveId") {
+                          return (
+                            <td key={col.key} className={`${col.width} px-2 py-2 text-center`}>
+                              <input
+                                list={`slave-list-${index}`}
+                                type="text"
+                                value={cellValue}
+                                placeholder="Type or select slave id"
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  if (/^-?\d*\.?\d*$/.test(val)) {
+                                    updateCell(index, col.key, val);
+                                  }
+                                }}
+                                className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
+                              />
+                              <datalist id={`slave-list-${index}`}>
+                                {slaveOptions.map((opt, i) => (
+                                  <option key={i} value={opt} />
+                                ))}
+                              </datalist>
                             </td>
                           );
                         }
