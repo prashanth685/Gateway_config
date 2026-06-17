@@ -246,13 +246,13 @@ export default function GatewayDetail() {
       const payload = latestMessage.payload.trim();
       const topic = (latestMessage.topic || "").toLowerCase();
 
-      // 1. Modbus Config response (ends with /readconfig/res or /readconfig/GroupX/res)
+      // 1. Modbus Config response (ends with /readconfig/res or /Readconfig/G{group}/res)
       if (
         topic.endsWith("/readconfig/res") ||
-        topic.match(/\/readconfig\/group\d+\/res$/i)
+        topic.match(/\/readconfig\/g\d+\/res$/i)
       ) {
-        // Extract group number from topic if present
-        const groupMatch = topic.match(/\/group(\d+)\/res$/i);
+        // Extract group number from topic if present (e.g., /Readconfig/G1/res -> group 0)
+        const groupMatch = topic.match(/\/g(\d+)\/res$/i);
         const responseGroup = groupMatch
           ? parseInt(groupMatch[1]) - 1
           : activeGroup;
@@ -351,13 +351,13 @@ export default function GatewayDetail() {
         }
       }
 
-      // 2. Wifi response (ends with /wifi/res or /wifi/GroupX/res)
+      // 2. Wifi response (ends with /wifi/res or /Wifi/G{group}/res)
       if (
         topic.endsWith("/wifi/res") ||
-        topic.match(/\/wifi\/group\d+\/res$/i)
+        topic.match(/\/wifi\/g\d+\/res$/i)
       ) {
-        // Extract group number from topic if present
-        const groupMatch = topic.match(/\/group(\d+)\/res$/i);
+        // Extract group number from topic if present (e.g., /Wifi/G1/res -> group 0)
+        const groupMatch = topic.match(/\/g(\d+)\/res$/i);
         const responseGroup = groupMatch
           ? parseInt(groupMatch[1]) - 1
           : activeGroup;
@@ -876,7 +876,7 @@ export default function GatewayDetail() {
         const payload = `${batch.start + 1}-${batch.end}`;
 
         await publishMutation.mutateAsync({
-          topic: `${prefix}/Readconfig/G1${activeGroup + 1}`,
+          topic: `${prefix}/Readconfig/G${activeGroup + 1}`,
           payload: payload,
         });
 
@@ -965,13 +965,13 @@ export default function GatewayDetail() {
 
     if (activeView === "publish") {
       data = activeData.publishRows;
-      fileName = `${prefix}_G1${activeGroup + 1}_publish_config.xlsx`;
+      fileName = `${prefix}_G${activeGroup + 1}_publish_config.xlsx`;
     } else if (activeView === "read") {
       data = activeData.readRows;
-      fileName = `${prefix}_G1${activeGroup + 1}_read_config.xlsx`;
+      fileName = `${prefix}_G${activeGroup + 1}_read_config.xlsx`;
     } else if (activeView === "wifi") {
       data = activeData.wifiRows;
-      fileName = `${prefix}_G1${activeGroup + 1}_wifi_status.xlsx`;
+      fileName = `${prefix}_G${activeGroup + 1}_wifi_status.xlsx`;
     }
 
     if (data.length === 0) {
@@ -1249,8 +1249,7 @@ export default function GatewayDetail() {
             <div className="mb-4 flex items-center gap-2 text-xs bg-[#E0F7FA] border border-[#0DCAF0] text-[#0DCAF0] px-4 py-2.5 rounded-lg">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>
-                Showing live data from {prefix}/Readconfig/G{activeGroup + 1}
-                /res — G {activeGroup + 1} — not saved to database
+                Showing live data from {prefix}/Readconfig/G{activeGroup + 1}/res — Group {activeGroup + 1} — not saved to database
               </span>
             </div>
           )}
@@ -1259,9 +1258,7 @@ export default function GatewayDetail() {
             <div className="mb-4 flex items-center gap-2 text-xs bg-[#E8F5E9] border border-[#2E7D32] text-[#2E7D32] px-4 py-2.5 rounded-lg animate-fadeIn">
               <AlertCircle className="w-4 h-4 shrink-0 text-[#2E7D32]" />
               <span>
-                Showing live WiFi & System status from {prefix}/Wifi/Group
-                {activeGroup + 1}/res — Group {activeGroup + 1} — not saved to
-                database
+                Showing live WiFi & System status from {prefix}/Wifi/G{activeGroup + 1}/res — Group {activeGroup + 1} — not saved to database
               </span>
             </div>
           )}
