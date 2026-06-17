@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams } from "react-router";
 import {
   Loader2,
@@ -38,15 +38,74 @@ const EMPTY_ROW = {
   stopBits: 1,
 };
 
+function renumberRows(rows) {
+  return rows.map((row, i) => ({
+    ...row,
+    parameterName: `P${i + 1}`,
+  }));
+}
+
+function resolveSlaveConflicts(rows) {
+  const used = new Set();
+  let changed = false;
+  const updated = [...rows];
+
+  let i = 0;
+  while (i < updated.length) {
+    const deviceName = updated[i]?.deviceName ?? "";
+    let sid = Number(updated[i]?.slaveId) || 1;
+
+    // Find the end of this consecutive device group
+    let j = i;
+    while (j < updated.length && updated[j]?.deviceName === deviceName) {
+      j++;
+    }
+
+    // If this slave ID is already taken, pick the next free one
+    if (used.has(sid)) {
+      let next = 1;
+      while (next <= 32 && used.has(next)) next++;
+      sid = next <= 32 ? next : 1;
+      changed = true;
+    }
+    used.add(sid);
+
+    // Write the (possibly resolved) slaveId to all rows in this group
+    for (let k = i; k < j; k++) {
+      if (Number(updated[k]?.slaveId) !== sid) {
+        updated[k] = { ...updated[k], slaveId: sid };
+      }
+    }
+
+    i = j;
+  }
+
+  return changed ? updated : rows;
+}
+
+function computeDeviceNameSpans(rows) {
+  const spans = new Map();
+  let i = 0;
+  while (i < rows.length) {
+    const name = rows[i]?.deviceName ?? "";
+    let j = i + 1;
+    while (j < rows.length && rows[j]?.deviceName === name) {
+      j++;
+    }
+    spans.set(i, j - i);
+    i = j;
+  }
+  return spans;
+}
+
 const TABLE_COLUMNS = [
-  { key: "slNo", label: "Sl No", type: "text", width: "w-16", isSerial: true },
+  { key: "deviceName", label: "Device Name", type: "text", width: "w-36" },
   {
     key: "parameterName",
     label: "Parameter Name",
     type: "text",
     width: "w-40",
   },
-  { key: "deviceName", label: "Device Name", type: "text", width: "w-36" },
   { key: "unit", label: "Unit", type: "text", width: "w-20" },
   { key: "slaveId", label: "Slave ID", type: "number", width: "w-20" },
   { key: "functionCode", label: "Func Code", type: "number", width: "w-20" },
@@ -147,7 +206,19 @@ export default function GatewayDetail() {
   const updateActiveGroupData = updater => {
     setGroupData(prev => {
       const newData = [...prev];
-      newData[activeGroup] = updater(newData[activeGroup]);
+      const updatedGroup = updater(newData[activeGroup]);
+      
+      // Apply auto-renumbering and slave conflict resolution for publishRows
+      if (updatedGroup.publishRows) {
+        updatedGroup.publishRows = resolveSlaveConflicts(renumberRows(updatedGroup.publishRows));
+      }
+      
+      // Apply auto-renumbering and slave conflict resolution for readRows
+      if (updatedGroup.readRows) {
+        updatedGroup.readRows = resolveSlaveConflicts(renumberRows(updatedGroup.readRows));
+      }
+      
+      newData[activeGroup] = updatedGroup;
       return newData;
     });
   };
@@ -162,6 +233,9 @@ export default function GatewayDetail() {
   const slaveOptions = [
     ...new Set(currentRows.map(r => r.slaveId).filter(Boolean)),
   ];
+
+  // Computed device name row spans (consecutive same device names merge)
+  const deviceNameSpans = useMemo(() => computeDeviceNameSpans(currentRows), [currentRows]);
 
   // Handle incoming SSE messages (ReadConfig & Wifi responses)
   useEffect(() => {
@@ -477,6 +551,105 @@ export default function GatewayDetail() {
     });
   }, [activeView, updateActiveGroupData, activeGroup]);
 
+  // Add a new row with the same device name as the current row
+  const addRowWithDevice = useCallback(
+    index => {
+      updateActiveGroupData(prev => {
+        let rows;
+        if (activeView === "publish") {
+          if (prev.publishRows.length >= PARAMETERS_PER_GROUP) {
+            toast.error(
+              `Maximum ${PARAMETERS_PER_GROUP} parameters allowed per group`
+            );
+            return prev;
+          }
+          rows = prev.publishRows;
+          const currentDevice = rows[index].deviceName;
+          const parameterNumber =
+            activeGroup * PARAMETERS_PER_GROUP + rows.length + 1;
+          const newParameterName = `P${parameterNumber}`;
+          const newRow = {
+            ...EMPTY_ROW,
+            parameterName: newParameterName,
+            deviceName: currentDevice,
+          };
+          // Insert after the current row
+          const newRows = [...rows];
+          newRows.splice(index + 1, 0, newRow);
+          return { ...prev, publishRows: newRows };
+        } else if (activeView === "read") {
+          if (prev.readRows.length >= PARAMETERS_PER_GROUP) {
+            toast.error(
+              `Maximum ${PARAMETERS_PER_GROUP} parameters allowed per group`
+            );
+            return prev;
+          }
+          rows = prev.readRows;
+          const currentDevice = rows[index].deviceName;
+          const parameterNumber =
+            activeGroup * PARAMETERS_PER_GROUP + rows.length + 1;
+          const newParameterName = `P${parameterNumber}`;
+          const newRow = {
+            ...EMPTY_ROW,
+            parameterName: newParameterName,
+            deviceName: currentDevice,
+          };
+          // Insert after the current row
+          const newRows = [...rows];
+          newRows.splice(index + 1, 0, newRow);
+          return { ...prev, readRows: newRows };
+        }
+        return prev;
+      });
+    },
+    [activeView, updateActiveGroupData, activeGroup]
+  );
+
+  // Add a new row to a specific device group (inserts after the group's last row)
+  const addRowToDevice = useCallback(
+    startIndex => {
+      updateActiveGroupData(prev => {
+        let rows;
+        if (activeView === "publish") {
+          if (prev.publishRows.length >= PARAMETERS_PER_GROUP) {
+            toast.error(
+              `Maximum ${PARAMETERS_PER_GROUP} parameters allowed per group`
+            );
+            return prev;
+          }
+          rows = prev.publishRows;
+        } else if (activeView === "read") {
+          if (prev.readRows.length >= PARAMETERS_PER_GROUP) {
+            toast.error(
+              `Maximum ${PARAMETERS_PER_GROUP} parameters allowed per group`
+            );
+            return prev;
+          }
+          rows = prev.readRows;
+        } else {
+          return prev;
+        }
+
+        const deviceName = rows[startIndex]?.deviceName ?? "";
+        const slaveId = rows[startIndex]?.slaveId ?? 1;
+        // Find end of this consecutive group
+        let end = startIndex;
+        while (end + 1 < rows.length && rows[end + 1]?.deviceName === deviceName) {
+          end++;
+        }
+        const newRow = { ...EMPTY_ROW, deviceName, slaveId };
+        const newRows = [...rows.slice(0, end + 1), newRow, ...rows.slice(end + 1)];
+
+        if (activeView === "publish") {
+          return { ...prev, publishRows: newRows };
+        } else {
+          return { ...prev, readRows: newRows };
+        }
+      });
+    },
+    [activeView, updateActiveGroupData]
+  );
+
   // Remove a row
   const removeRow = useCallback(
     index => {
@@ -515,24 +688,29 @@ export default function GatewayDetail() {
           return prev;
         }
 
-        const row = { ...updated[index] };
-        row[key] = value;
-        updated[index] = row;
+        // Sync device name / slave ID change across all rows in the consecutive group
+        if (key === "deviceName" || key === "slaveId") {
+          const oldVal = updated[index]?.[key];
+          if (String(oldVal) === value) return prev;
 
-        // Auto-fill logic: If slaveId entered → auto-fill deviceName if exists
-        if (key === "slaveId") {
-          const match = rows.find(r => r.slaveId === value && r.deviceName);
-          if (match?.deviceName) {
-            updated[index].deviceName = match.deviceName;
+          // Find start of this consecutive group
+          let start = index;
+          while (start > 0 && updated[start - 1]?.deviceName === updated[index]?.deviceName) {
+            start--;
           }
-        }
-
-        // Auto-fill logic: If deviceName entered → auto-fill slaveId if exists
-        if (key === "deviceName") {
-          const match = rows.find(r => r.deviceName === value && r.slaveId);
-          if (match?.slaveId) {
-            updated[index].slaveId = match.slaveId;
+          // Find end of this consecutive group
+          let end = index;
+          while (end + 1 < updated.length && updated[end + 1]?.deviceName === updated[index]?.deviceName) {
+            end++;
           }
+          // Update all rows in the group
+          for (let i = start; i <= end; i++) {
+            updated[i] = { ...updated[i], [key]: value };
+          }
+        } else {
+          const row = { ...updated[index] };
+          row[key] = value;
+          updated[index] = row;
         }
 
         // Auto-fill logic: If dataType changed → auto-set length (Int=1, Float=2)
@@ -1088,6 +1266,42 @@ export default function GatewayDetail() {
             </div>
           )}
 
+          {/* Parameter summary bar */}
+          {currentRows.length > 0 && (activeView === "publish" || activeView === "read") && (
+            <div className="mb-4 flex items-center gap-3 text-xs text-[#6C757D] bg-white border border-[#E9ECEF] rounded-lg px-4 py-2.5 flex-wrap">
+              {(() => {
+                const groups = [];
+                let i = 0;
+                while (i < currentRows.length) {
+                  const name = currentRows[i]?.deviceName || "(unnamed)";
+                  let j = i + 1;
+                  while (j < currentRows.length && currentRows[j]?.deviceName === currentRows[i]?.deviceName) {
+                    j++;
+                  }
+                  groups.push({ name, start: i + 1, end: j });
+                  i = j;
+                }
+                return groups.map((g, idx) => {
+                  const count = g.end - g.start + 1;
+                  return (
+                    <span key={idx} className="flex items-center gap-1">
+                      {idx > 0 && <span className="text-[#ADB5BD]">|</span>}
+                      <span className="font-medium text-[#212529]">{g.name}</span>
+                      <span>
+                        P{g.start}–P{g.end}
+                        <span className="text-[#6C757D] ml-0.5">({count})</span>
+                      </span>
+                    </span>
+                  );
+                });
+              })()}
+              <span className="text-[#ADB5BD]">|</span>
+              <span className="text-[#4361EE] font-medium">
+                Total: {currentRows.length} parameter{currentRows.length !== 1 ? "s" : ""}
+              </span>
+            </div>
+          )}
+
           {/* Loading state */}
           {gateway.isLoading && (
             <div className="flex items-center justify-center py-20">
@@ -1282,29 +1496,92 @@ export default function GatewayDetail() {
                           }
 
                           if (col.key === "deviceName") {
-                            return (
-                              <td
-                                key={col.key}
-                                className={`${col.width} px-2 py-2 text-center`}
-                              >
-                                <input
-                                  list={`device-list-${index}`}
-                                  type="text"
-                                  value={cellValue}
-                                  placeholder="Type or select device"
-                                  onChange={e => {
-                                    const val = e.target.value;
-                                    updateCell(index, col.key, val);
-                                  }}
-                                  className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
-                                />
-                                <datalist id={`device-list-${index}`}>
-                                  {deviceOptions.map((opt, i) => (
-                                    <option key={i} value={opt} />
-                                  ))}
-                                </datalist>
-                              </td>
-                            );
+                            const rowSpan = deviceNameSpans.get(index);
+                            if (rowSpan && rowSpan > 1) {
+                              // This is the start of a group - render with rowSpan
+                              return (
+                                <td
+                                  key={col.key}
+                                  rowSpan={rowSpan}
+                                  className={`${col.width} px-2 py-2 text-center align-middle`}
+                                >
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      list={`device-list-${index}`}
+                                      type="text"
+                                      value={cellValue}
+                                      placeholder="Type or select device"
+                                      onChange={e => {
+                                        const val = e.target.value;
+                                        updateCell(index, col.key, val);
+                                      }}
+                                      className="flex-1 bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
+                                    />
+                                    <button
+                                      onClick={() => addRowToDevice(index)}
+                                      disabled={
+                                        (activeView === "publish"
+                                          ? getActiveGroupData().publishRows.length
+                                          : getActiveGroupData().readRows.length) >=
+                                        PARAMETERS_PER_GROUP
+                                      }
+                                      className="p-1 text-[#4361EE] hover:text-[#3A53D0] hover:bg-[#EEF0FE] rounded transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                      title="Add parameter for this device"
+                                    >
+                                      <Plus className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                  <datalist id={`device-list-${index}`}>
+                                    {deviceOptions.map((opt, i) => (
+                                      <option key={i} value={opt} />
+                                    ))}
+                                  </datalist>
+                                </td>
+                              );
+                            } else if (rowSpan === 1) {
+                              // Single row - render normally
+                              return (
+                                <td
+                                  key={col.key}
+                                  className={`${col.width} px-2 py-2 text-center`}
+                                >
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      list={`device-list-${index}`}
+                                      type="text"
+                                      value={cellValue}
+                                      placeholder="Type or select device"
+                                      onChange={e => {
+                                        const val = e.target.value;
+                                        updateCell(index, col.key, val);
+                                      }}
+                                      className="flex-1 bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
+                                    />
+                                    <button
+                                      onClick={() => addRowToDevice(index)}
+                                      disabled={
+                                        (activeView === "publish"
+                                          ? getActiveGroupData().publishRows.length
+                                          : getActiveGroupData().readRows.length) >=
+                                        PARAMETERS_PER_GROUP
+                                      }
+                                      className="p-1 text-[#4361EE] hover:text-[#3A53D0] hover:bg-[#EEF0FE] rounded transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                      title="Add parameter for this device"
+                                    >
+                                      <Plus className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                  <datalist id={`device-list-${index}`}>
+                                    {deviceOptions.map((opt, i) => (
+                                      <option key={i} value={opt} />
+                                    ))}
+                                  </datalist>
+                                </td>
+                              );
+                            } else {
+                              // Part of a merged group - skip rendering
+                              return null;
+                            }
                           }
 
                           if (col.key === "slaveId") {
@@ -1313,24 +1590,19 @@ export default function GatewayDetail() {
                                 key={col.key}
                                 className={`${col.width} px-2 py-2 text-center`}
                               >
-                                <input
-                                  list={`slave-list-${index}`}
-                                  type="text"
+                                <select
                                   value={cellValue}
-                                  placeholder="Type or select slave id"
                                   onChange={e => {
-                                    const val = e.target.value;
-                                    if (/^-?\d*\.?\d*$/.test(val)) {
-                                      updateCell(index, col.key, val);
-                                    }
+                                    updateCell(index, col.key, e.target.value);
                                   }}
-                                  className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
-                                />
-                                <datalist id={`slave-list-${index}`}>
-                                  {slaveOptions.map((opt, i) => (
-                                    <option key={i} value={opt} />
+                                  className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
+                                >
+                                  {Array.from({ length: 31 }, (_, i) => i + 1).map(id => (
+                                    <option key={id} value={id}>
+                                      {id}
+                                    </option>
                                   ))}
-                                </datalist>
+                                </select>
                               </td>
                             );
                           }
@@ -1403,7 +1675,7 @@ export default function GatewayDetail() {
                   className="inline-flex items-center gap-1.5 text-sm text-[#4361EE] hover:text-[#3A53D0] font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Plus className="w-4 h-4" />
-                  Add Row
+                  Add Device
                 </button>
                 <span className="ml-4 text-xs text-[#6C757D]">
                   {getActiveGroupData().publishRows.length} /{" "}
@@ -1644,29 +1916,92 @@ export default function GatewayDetail() {
                           }
 
                           if (col.key === "deviceName") {
-                            return (
-                              <td
-                                key={col.key}
-                                className={`${col.width} px-2 py-2 text-center`}
-                              >
-                                <input
-                                  list={`device-list-${index}`}
-                                  type="text"
-                                  value={cellValue}
-                                  placeholder="Type or select device"
-                                  onChange={e => {
-                                    const val = e.target.value;
-                                    updateCell(index, col.key, val);
-                                  }}
-                                  className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
-                                />
-                                <datalist id={`device-list-${index}`}>
-                                  {deviceOptions.map((opt, i) => (
-                                    <option key={i} value={opt} />
-                                  ))}
-                                </datalist>
-                              </td>
-                            );
+                            const rowSpan = deviceNameSpans.get(index);
+                            if (rowSpan && rowSpan > 1) {
+                              // This is the start of a group - render with rowSpan
+                              return (
+                                <td
+                                  key={col.key}
+                                  rowSpan={rowSpan}
+                                  className={`${col.width} px-2 py-2 text-center align-top`}
+                                >
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      list={`device-list-${index}`}
+                                      type="text"
+                                      value={cellValue}
+                                      placeholder="Type or select device"
+                                      onChange={e => {
+                                        const val = e.target.value;
+                                        updateCell(index, col.key, val);
+                                      }}
+                                      className="flex-1 bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
+                                    />
+                                    <button
+                                      onClick={() => addRowToDevice(index)}
+                                      disabled={
+                                        (activeView === "publish"
+                                          ? getActiveGroupData().publishRows.length
+                                          : getActiveGroupData().readRows.length) >=
+                                        PARAMETERS_PER_GROUP
+                                      }
+                                      className="p-1 text-[#4361EE] hover:text-[#3A53D0] hover:bg-[#EEF0FE] rounded transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                      title="Add parameter for this device"
+                                    >
+                                      <Plus className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                  <datalist id={`device-list-${index}`}>
+                                    {deviceOptions.map((opt, i) => (
+                                      <option key={i} value={opt} />
+                                    ))}
+                                  </datalist>
+                                </td>
+                              );
+                            } else if (rowSpan === 1) {
+                              // Single row - render normally
+                              return (
+                                <td
+                                  key={col.key}
+                                  className={`${col.width} px-2 py-2 text-center`}
+                                >
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      list={`device-list-${index}`}
+                                      type="text"
+                                      value={cellValue}
+                                      placeholder="Type or select device"
+                                      onChange={e => {
+                                        const val = e.target.value;
+                                        updateCell(index, col.key, val);
+                                      }}
+                                      className="flex-1 bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
+                                    />
+                                    <button
+                                      onClick={() => addRowToDevice(index)}
+                                      disabled={
+                                        (activeView === "publish"
+                                          ? getActiveGroupData().publishRows.length
+                                          : getActiveGroupData().readRows.length) >=
+                                        PARAMETERS_PER_GROUP
+                                      }
+                                      className="p-1 text-[#4361EE] hover:text-[#3A53D0] hover:bg-[#EEF0FE] rounded transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                      title="Add parameter for this device"
+                                    >
+                                      <Plus className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                  <datalist id={`device-list-${index}`}>
+                                    {deviceOptions.map((opt, i) => (
+                                      <option key={i} value={opt} />
+                                    ))}
+                                  </datalist>
+                                </td>
+                              );
+                            } else {
+                              // Part of a merged group - skip rendering
+                              return null;
+                            }
                           }
 
                           if (col.key === "slaveId") {
@@ -1675,24 +2010,19 @@ export default function GatewayDetail() {
                                 key={col.key}
                                 className={`${col.width} px-2 py-2 text-center`}
                               >
-                                <input
-                                  list={`slave-list-${index}`}
-                                  type="text"
+                                <select
                                   value={cellValue}
-                                  placeholder="Type or select slave id"
                                   onChange={e => {
-                                    const val = e.target.value;
-                                    if (/^-?\d*\.?\d*$/.test(val)) {
-                                      updateCell(index, col.key, val);
-                                    }
+                                    updateCell(index, col.key, e.target.value);
                                   }}
-                                  className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
-                                />
-                                <datalist id={`slave-list-${index}`}>
-                                  {slaveOptions.map((opt, i) => (
-                                    <option key={i} value={opt} />
+                                  className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
+                                >
+                                  {Array.from({ length: 31 }, (_, i) => i + 1).map(id => (
+                                    <option key={id} value={id}>
+                                      {id}
+                                    </option>
                                   ))}
-                                </datalist>
+                                </select>
                               </td>
                             );
                           }
