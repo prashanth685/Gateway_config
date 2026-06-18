@@ -98,17 +98,32 @@ function computeDeviceNameSpans(rows) {
   return spans;
 }
 
+function computeSlaveIdSpans(rows) {
+  const spans = new Map();
+  let i = 0;
+  while (i < rows.length) {
+    const slaveId = rows[i]?.slaveId ?? "";
+    let j = i + 1;
+    while (j < rows.length && rows[j]?.slaveId === slaveId) {
+      j++;
+    }
+    spans.set(i, j - i);
+    i = j;
+  }
+  return spans;
+}
+
 const TABLE_COLUMNS = [
-  { key: "deviceName", label: "Device Name", type: "text", width: "w-36" },
+  { key: "deviceName", label: "Device Name", type: "text", width: "w-5" },
+  { key: "slaveId", label: "Slave ID", type: "number", width: "w-20" },
   {
     key: "parameterName",
     label: "Parameter Name",
     type: "text",
-    width: "w-40",
+    width: "w-24",
   },
   { key: "unit", label: "Unit", type: "text", width: "w-20" },
-  { key: "slaveId", label: "Slave ID", type: "number", width: "w-20" },
-  { key: "functionCode", label: "Func Code", type: "number", width: "w-20" },
+  { key: "functionCode", label: "Func Code", type: "number", width: "w-22" },
   { key: "address", label: "Address", type: "number", width: "w-20" },
   { key: "length", label: "Length", type: "number", width: "w-16" },
   { key: "dataType", label: "Data Type", type: "text", width: "w-24" },
@@ -236,6 +251,9 @@ export default function GatewayDetail() {
 
   // Computed device name row spans (consecutive same device names merge)
   const deviceNameSpans = useMemo(() => computeDeviceNameSpans(currentRows), [currentRows]);
+
+  // Computed slave ID row spans (consecutive same slave IDs merge)
+  const slaveIdSpans = useMemo(() => computeSlaveIdSpans(currentRows), [currentRows]);
 
   // Handle incoming SSE messages (ReadConfig & Wifi responses)
   useEffect(() => {
@@ -1582,26 +1600,56 @@ export default function GatewayDetail() {
                           }
 
                           if (col.key === "slaveId") {
-                            return (
-                              <td
-                                key={col.key}
-                                className={`${col.width} px-2 py-2 text-center`}
-                              >
-                                <select
-                                  value={cellValue}
-                                  onChange={e => {
-                                    updateCell(index, col.key, e.target.value);
-                                  }}
-                                  className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
+                            const rowSpan = slaveIdSpans.get(index);
+                            if (rowSpan && rowSpan > 1) {
+                              // This is the start of a group - render with rowSpan
+                              return (
+                                <td
+                                  key={col.key}
+                                  rowSpan={rowSpan}
+                                  className={`${col.width} px-2 py-2 text-center align-middle`}
                                 >
-                                  {Array.from({ length: 31 }, (_, i) => i + 1).map(id => (
-                                    <option key={id} value={id}>
-                                      {id}
-                                    </option>
-                                  ))}
-                                </select>
-                              </td>
-                            );
+                                  <select
+                                    value={cellValue}
+                                    onChange={e => {
+                                      updateCell(index, col.key, e.target.value);
+                                    }}
+                                    className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
+                                  >
+                                    {Array.from({ length: 31 }, (_, i) => i + 1).map(id => (
+                                      <option key={id} value={id}>
+                                        {id}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </td>
+                              );
+                            } else if (rowSpan === 1) {
+                              // Single row - render normally
+                              return (
+                                <td
+                                  key={col.key}
+                                  className={`${col.width} px-2 py-2 text-center`}
+                                >
+                                  <select
+                                    value={cellValue}
+                                    onChange={e => {
+                                      updateCell(index, col.key, e.target.value);
+                                    }}
+                                    className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
+                                  >
+                                    {Array.from({ length: 31 }, (_, i) => i + 1).map(id => (
+                                      <option key={id} value={id}>
+                                        {id}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </td>
+                              );
+                            } else {
+                              // Part of a merged group - skip rendering
+                              return null;
+                            }
                           }
 
                           if (col.key === "parameterName") {
@@ -2002,26 +2050,56 @@ export default function GatewayDetail() {
                           }
 
                           if (col.key === "slaveId") {
-                            return (
-                              <td
-                                key={col.key}
-                                className={`${col.width} px-2 py-2 text-center`}
-                              >
-                                <select
-                                  value={cellValue}
-                                  onChange={e => {
-                                    updateCell(index, col.key, e.target.value);
-                                  }}
-                                  className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
+                            const rowSpan = slaveIdSpans.get(index);
+                            if (rowSpan && rowSpan > 1) {
+                              // This is the start of a group - render with rowSpan
+                              return (
+                                <td
+                                  key={col.key}
+                                  rowSpan={rowSpan}
+                                  className={`${col.width} px-2 py-2 text-center align-middle`}
                                 >
-                                  {Array.from({ length: 31 }, (_, i) => i + 1).map(id => (
-                                    <option key={id} value={id}>
-                                      {id}
-                                    </option>
-                                  ))}
-                                </select>
-                              </td>
-                            );
+                                  <select
+                                    value={cellValue}
+                                    onChange={e => {
+                                      updateCell(index, col.key, e.target.value);
+                                    }}
+                                    className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
+                                  >
+                                    {Array.from({ length: 31 }, (_, i) => i + 1).map(id => (
+                                      <option key={id} value={id}>
+                                        {id}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </td>
+                              );
+                            } else if (rowSpan === 1) {
+                              // Single row - render normally
+                              return (
+                                <td
+                                  key={col.key}
+                                  className={`${col.width} px-2 py-2 text-center`}
+                                >
+                                  <select
+                                    value={cellValue}
+                                    onChange={e => {
+                                      updateCell(index, col.key, e.target.value);
+                                    }}
+                                    className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
+                                  >
+                                    {Array.from({ length: 31 }, (_, i) => i + 1).map(id => (
+                                      <option key={id} value={id}>
+                                        {id}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </td>
+                              );
+                            } else {
+                              // Part of a merged group - skip rendering
+                              return null;
+                            }
                           }
 
                           if (col.key === "parameterName") {
