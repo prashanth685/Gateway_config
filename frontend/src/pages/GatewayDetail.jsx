@@ -2244,7 +2244,7 @@ export default function GatewayDetail() {
 
               {/* WiFi Response Display */}
 
-              {wifiResponse && (
+              {/* {wifiResponse && (
                 <div className="bg-white border border-[#E9ECEF] rounded-xl p-4 shadow-sm">
                   <h3 className="text-sm font-semibold text-[#212529] mb-2">
                   </h3>
@@ -2252,7 +2252,29 @@ export default function GatewayDetail() {
                     {wifiResponse}
                   </pre>
                 </div>
-              )}
+              )} */}
+              {wifiResponse && (() => {
+  const [ssid, password] = wifiResponse.split(",");
+
+  return (
+    <div className="bg-white border border-[#E9ECEF] rounded-xl p-4 shadow-sm">
+      <table className="w-full border border-[#E9ECEF]">
+        <thead>
+          <tr className="bg-[#F8F9FA]">
+            <th className="border border-[#E9ECEF] p-2 text-left">SSID</th>
+            <th className="border border-[#E9ECEF] p-2 text-left">Password</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td className="border border-[#E9ECEF] p-2">{ssid}</td>
+            <td className="border border-[#E9ECEF] p-2">{password}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+})()}
 
               {readingWifi && !wifiResponse && (
                 <div className="bg-white border border-[#E9ECEF] rounded-xl p-12 shadow-sm">
