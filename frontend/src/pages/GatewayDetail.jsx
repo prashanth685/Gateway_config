@@ -13,6 +13,10 @@ import {
   Eye,
   NotebookPen,
   Minus,
+  MapPin,
+  Clock,
+  BookOpen,
+
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/providers/trpc";
@@ -172,7 +176,6 @@ export default function GatewayDetail() {
     Array.from({ length: GROUPS_COUNT }, () => ({
       publishRows: [],
       readRows: [],
-      wifiRows: [],
     }))
   );
 
@@ -210,6 +213,16 @@ export default function GatewayDetail() {
 
   const [readingWifi, setReadingWifi] = useState(false);
   const [showWifiLiveBanner, setShowWifiLiveBanner] = useState(false);
+  const [readingLocation, setReadingLocation] = useState(false);
+  const [showLocationLiveBanner, setShowLocationLiveBanner] = useState(false);
+  const [readingDelay, setReadingDelay] = useState(false);
+  const [showDelayLiveBanner, setShowDelayLiveBanner] = useState(false);
+
+  const [wifiResponse, setWifiResponse] = useState("");
+  const [locationInput, setLocationInput] = useState("");
+  const [locationResponse, setLocationResponse] = useState("");
+  const [delayInput, setDelayInput] = useState("");
+  const [delayResponse, setDelayResponse] = useState("");
 
   const [testStatus, setTestStatus] = useState(null);
   const [testing, setTesting] = useState(false);
@@ -369,112 +382,20 @@ export default function GatewayDetail() {
         }
       }
 
-      // 2. Wifi response (ends with /wifi/res or /Wifi/G{group}/res)
-      if (
-        topic.endsWith("/wifi/res") ||
-        topic.match(/\/wifi\/g\d+\/res$/i)
-      ) {
-        // Extract group number from topic if present (e.g., /Wifi/G1/res -> group 0)
-        const groupMatch = topic.match(/\/g(\d+)\/res$/i);
-        const responseGroup = groupMatch
-          ? parseInt(groupMatch[1]) - 1
-          : activeGroup;
-
+      // 2. Wifi response (ends with /wifi/res)
+      if (topic.endsWith("/wifi/res")) {
         setActiveView("wifi");
-        try {
-          // Option 1: Parse as JSON array
-          if (payload.startsWith("[") && payload.endsWith("]")) {
-            const parsed = JSON.parse(payload);
-            if (Array.isArray(parsed)) {
-              const validRows = parsed.map(r => ({
-                publishConfig: String(
-                  r.PublishConfig ?? r.publishConfig ?? r.publish_config ?? ""
-                ),
-                readConfig: String(
-                  r.ReadConfig ?? r.readConfig ?? r.read_config ?? ""
-                ),
-                wifi: String(r.WiFi ?? r.wifi ?? ""),
-                location: String(r.Location ?? r.location ?? ""),
-                delay: String(r.Delay ?? r.delay ?? ""),
-              }));
-              setGroupData(prev => {
-                const newData = [...prev];
-                newData[responseGroup] = {
-                  ...newData[responseGroup],
-                  wifiRows: validRows,
-                };
-                return newData;
-              });
-              setReadingWifi(false);
-              setShowWifiLiveBanner(true);
-              return;
-            }
-          }
+        setReadingWifi(false);
+        setWifiResponse(payload);
+        setShowWifiLiveBanner(true);
+      }
 
-          // Option 2: Parse as single JSON object
-          if (payload.startsWith("{") && payload.endsWith("}")) {
-            const r = JSON.parse(payload);
-            setGroupData(prev => {
-              const newData = [...prev];
-              newData[responseGroup] = {
-                ...newData[responseGroup],
-                wifiRows: [
-                  {
-                    publishConfig: String(
-                      r.PublishConfig ??
-                        r.publishConfig ??
-                        r.publish_config ??
-                        ""
-                    ),
-                    readConfig: String(
-                      r.ReadConfig ?? r.readConfig ?? r.read_config ?? ""
-                    ),
-                    wifi: String(r.WiFi ?? r.wifi ?? ""),
-                    location: String(r.Location ?? r.location ?? ""),
-                    delay: String(r.Delay ?? r.delay ?? ""),
-                  },
-                ],
-              };
-              return newData;
-            });
-            setReadingWifi(false);
-            setShowWifiLiveBanner(true);
-            return;
-          }
-
-          // Option 3: Parse as flat comma-separated list (quoted or unquoted)
-          const items = payload.split(",").map(s => {
-            let clean = s.trim();
-            if (clean.startsWith('"') && clean.endsWith('"')) {
-              clean = clean.slice(1, -1);
-            }
-            return clean;
-          });
-          if (items.length > 0 && items.length % 5 === 0) {
-            const parsedRows = [];
-            for (let i = 0; i < items.length; i += 5) {
-              parsedRows.push({
-                publishConfig: items[i],
-                readConfig: items[i + 1],
-                wifi: items[i + 2],
-                location: items[i + 3],
-                delay: items[i + 4],
-              });
-            }
-            setGroupData(prev => {
-              const newData = [...prev];
-              newData[responseGroup] = {
-                ...newData[responseGroup],
-                wifiRows: parsedRows,
-              };
-              return newData;
-            });
-            setReadingWifi(false);
-            setShowWifiLiveBanner(true);
-          }
-        } catch (err) {
-          console.error("Failed to parse wifi response:", err);
-        }
+      // 3. Location response (ends with /ReadLocationdetails/res)
+      if (topic.endsWith("/ReadLocationdetails/res")) {
+        setActiveView("location");
+        setReadingLocation(false);
+        setLocationResponse(payload);
+        setShowLocationLiveBanner(true);
       }
 
       // 3. Test response (ends with /test/res or /Test/res)
@@ -914,24 +835,99 @@ export default function GatewayDetail() {
     }
   };
 
-  // Wifi Trigger (trigger Wifi → subscribe to Wifi/res) for active group
-  const handleWifi = async () => {
+  // Read WiFi (trigger Wifi → subscribe to Wifi/res)
+  const handleReadWifi = async () => {
     if (!prefix) return;
     setActiveView("wifi");
     setReadingWifi(true);
     setShowWifiLiveBanner(true);
-
-    // Clear previous data for active group
-    updateActiveGroupData(prev => ({ ...prev, wifiRows: [] }));
+    setWifiResponse("");
 
     try {
       await publishMutation.mutateAsync({
-        topic: `${prefix}/Wifi/G1${activeGroup + 1}`,
+        topic: `${prefix}/Wifi`,
         payload: "1",
       });
     } catch (err) {
       console.error("Wifi trigger failed:", err);
       setReadingWifi(false);
+    }
+  };
+
+  // Set Location
+  const handleSetLocation = async () => {
+    if (!prefix) {
+      const length=locationInput.length <=15;
+      if(!length){
+        toast.error("Location name must be less than 15 characters");
+        return;
+      }
+      toast.error("Gateway prefix not available");
+      return;
+    }
+
+    if (!locationInput) {
+
+      toast.error("Please enter location name");
+      return;
+    }
+
+    try {
+      await publishMutation.mutateAsync({
+        topic: `${prefix}/SetLocation`,
+        payload: locationInput,
+      });
+
+      toast.success("Location set successfully");
+      setLocationInput("");
+    } catch (err) {
+      console.error("Failed to set location:", err);
+      toast.error("Failed to set location");
+    }
+  };
+
+  // Read Location
+  const handleReadLocation = async () => {
+    if (!prefix) return;
+    setActiveView("location");
+    setReadingLocation(true);
+    setShowLocationLiveBanner(true);
+    setLocationResponse("");
+
+    try {
+      await publishMutation.mutateAsync({
+        topic: `${prefix}/ReadLocationdetails`,
+        payload: "1",
+      });
+    } catch (err) {
+      console.error("Read location failed:", err);
+      setReadingLocation(false);
+    }
+  };
+
+  // Set Delay
+  const handleSetDelay = async () => {
+    if (!prefix) {
+      toast.error("Gateway prefix not available");
+      return;
+    }
+
+    if (!delayInput) {
+      toast.error("Please enter delay value");
+      return;
+    }
+
+    try {
+      await publishMutation.mutateAsync({
+        topic: `${prefix}/Delay`,
+        payload: delayInput,
+      });
+
+      toast.success("Delay set successfully");
+      setDelayInput("");
+    } catch (err) {
+      console.error("Failed to set delay:", err);
+      toast.error("Failed to set delay");
     }
   };
 
@@ -987,9 +983,8 @@ export default function GatewayDetail() {
     } else if (activeView === "read") {
       data = activeData.readRows;
       fileName = `${prefix}_G${activeGroup + 1}_read_config.xlsx`;
-    } else if (activeView === "wifi") {
-      data = activeData.wifiRows;
-      fileName = `${prefix}_G${activeGroup + 1}_wifi_status.xlsx`;
+    } else {
+      return;
     }
 
     if (data.length === 0) {
@@ -1059,15 +1054,6 @@ export default function GatewayDetail() {
           } else {
             updateActiveGroupData(prev => ({ ...prev, readRows: limitedRows }));
           }
-        } else if (activeView === "wifi") {
-          const validRows = jsonData.map(row => ({
-            publishConfig: String(row.publishConfig || row.PublishConfig || ""),
-            readConfig: String(row.readConfig || row.ReadConfig || ""),
-            wifi: String(row.wifi || row.WiFi || ""),
-            location: String(row.location || row.Location || ""),
-            delay: String(row.delay || row.Delay || ""),
-          }));
-          updateActiveGroupData(prev => ({ ...prev, wifiRows: validRows }));
         }
 
         toast.success(`Imported ${jsonData.length} rows from Excel`);
@@ -1205,7 +1191,9 @@ export default function GatewayDetail() {
                     : "text-[#6C757D] hover:text-[#212529]"
                 }`}
               >
-                Publish Config
+
+              <NotebookPen className="w-4 h-4 mr-2 inline text-[#4361EE]" />
+                Write 
               </button>
 
               <button
@@ -1216,50 +1204,69 @@ export default function GatewayDetail() {
                     : "text-[#6C757D] hover:text-[#212529]"
                 }`}
               >
-                Read Config
+                <BookOpen className="w-4 h-4 mr-2 inline text-[#4361EE]" />
+                Read 
               </button>
 
               <button
-                onClick={handleWifi}
-                disabled={readingWifi || !prefix}
+                onClick={() => setActiveView("wifi")}
                 className={`px-4 py-2 text-sm font-medium transition-colors cursor-pointer ${
                   activeView === "wifi"
                     ? "text-[#4361EE] border-b-2 border-[#4361EE] -mb-[1px]"
                     : "text-[#6C757D] hover:text-[#212529]"
                 }`}
               >
-                {readingWifi ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin mr-2 inline" />
-                    Fetching...
-                  </>
-                ) : (
-                  <>
-                    <Wifi className="w-4 h-4 mr-2 inline text-[#4361EE]" />
-                    WiFi
-                  </>
-                )}
+                <Wifi className="w-4 h-4 mr-2 inline text-[#4361EE]" />
+                WiFi
+              </button>
+
+              <button
+                onClick={() => setActiveView("location")}
+                className={`px-4 py-2 text-sm font-medium transition-colors cursor-pointer ${
+                  activeView === "location"
+                    ? "text-[#4361EE] border-b-2 border-[#4361EE] -mb-[1px]"
+                    : "text-[#6C757D] hover:text-[#212529]"
+                }`}
+              >
+                <MapPin className="w-4 h-4 mr-2 inline text-[#4361EE]" />
+                Location
+              </button>
+
+              <button
+                onClick={() => setActiveView("delay")}
+                className={`px-4 py-2 text-sm font-medium transition-colors cursor-pointer ${
+                  activeView === "delay"
+                    ? "text-[#4361EE] border-b-2 border-[#4361EE] -mb-[1px]"
+                    : "text-[#6C757D] hover:text-[#212529]"
+                }`}
+              >
+                <Clock className="w-4 h-4 mr-2 inline text-[#4361EE]" />
+                Delay
               </button>
             </div>
 
             {/* Right Side Import Button */}
-            <input
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={handleImport}
-              className="hidden"
-              id="import-file-input"
-            />
-            <Button
-              variant="outline"
-              className="mb-2 border-[#4361EE] text-[#4361EE] cursor-pointer"
-              onClick={() =>
-                document.getElementById("import-file-input").click()
-              }
-            >
-              <Download className="w-4 h-4 mr-2" />
-              Import
-            </Button>
+            {activeView !== "wifi" && activeView !== "location" && activeView !== "delay" && (
+              <>
+                <input
+                  type="file"
+                  accept=".xlsx,.xls"
+                  onChange={handleImport}
+                  className="hidden"
+                  id="import-file-input"
+                />
+                <Button
+                  variant="outline"
+                  className="mb-2 border-[#4361EE] text-[#4361EE] cursor-pointer"
+                  onClick={() =>
+                    document.getElementById("import-file-input").click()
+                  }
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  Import
+                </Button>
+              </>
+            )}
           </div>
 
           {/* Live Data Banners */}
@@ -1276,7 +1283,16 @@ export default function GatewayDetail() {
             <div className="mb-4 flex items-center gap-2 text-xs bg-[#E8F5E9] border border-[#2E7D32] text-[#2E7D32] px-4 py-2.5 rounded-lg animate-fadeIn">
               <AlertCircle className="w-4 h-4 shrink-0 text-[#2E7D32]" />
               <span>
-                Showing live WiFi & System status from {prefix}/Wifi/G{activeGroup + 1}/res — Group {activeGroup + 1} — not saved to database
+                WiFi response received from {prefix}/Wifi/res
+              </span>
+            </div>
+          )}
+
+          {showLocationLiveBanner && activeView === "location" && (
+            <div className="mb-4 flex items-center gap-2 text-xs bg-[#E8F5E9] border border-[#2E7D32] text-[#2E7D32] px-4 py-2.5 rounded-lg animate-fadeIn">
+              <AlertCircle className="w-4 h-4 shrink-0 text-[#2E7D32]" />
+              <span>
+                Location response received from {prefix}/ReadLocationdetails/res
               </span>
             </div>
           )}
@@ -2207,94 +2223,165 @@ export default function GatewayDetail() {
             <div className="mt-2 animate-fadeIn">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-semibold text-[#212529] tracking-tight">
-                  WiFi & System Status
+                  WiFi Configuration
+                </h2>
+                <Button
+                  onClick={handleReadWifi}
+                  disabled={!prefix || readingWifi}
+                  variant="outline"
+                  className="h-10 px-5 border-[#4361EE] text-[#4361EE] hover:bg-[#EEF0FE] disabled:opacity-50 cursor-pointer"
+                >
+                  {readingWifi ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      Reading...
+                    </>
+                  ) : (
+                    "Read WiFi"
+                  )}
+                </Button>
+              </div>
+
+              {/* WiFi Response Display */}
+
+              {wifiResponse && (
+                <div className="bg-white border border-[#E9ECEF] rounded-xl p-4 shadow-sm">
+                  <h3 className="text-sm font-semibold text-[#212529] mb-2">
+                  </h3>
+                  <pre className="bg-[#F8F9FA] border border-[#E9ECEF] rounded-lg p-3 text-sm text-[#212529] font-mono overflow-x-auto">
+                    {wifiResponse}
+                  </pre>
+                </div>
+              )}
+
+              {readingWifi && !wifiResponse && (
+                <div className="bg-white border border-[#E9ECEF] rounded-xl p-12 shadow-sm">
+                  <div className="flex items-center justify-center gap-2 text-sm text-[#6C757D]">
+                    <Loader2 className="w-4 h-4 animate-spin text-[#4361EE]" />
+                    Waiting for WiFi response...
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Location Section */}
+          {gateway.data && activeView === "location" && (
+            <div className="mt-2 animate-fadeIn">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold text-[#212529] tracking-tight">
+                  Location Configuration
                 </h2>
               </div>
-              <div className="bg-white border border-[#E9ECEF] rounded-xl overflow-hidden shadow-sm">
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[800px]">
-                    <thead>
-                      <tr className="bg-[#F8F9FA] border-b-2 border-[#E9ECEF]">
-                        <th className="px-4 py-3 text-center text-xs font-semibold text-[#6C757D] uppercase tracking-wider">
-                          Publish Config
-                        </th>
-                        <th className="px-4 py-3 text-center text-xs font-semibold text-[#6C757D] uppercase tracking-wider">
-                          Read Config
-                        </th>
-                        <th className="px-4 py-3 text-center text-xs font-semibold text-[#6C757D] uppercase tracking-wider">
-                          WiFi
-                        </th>
-                        <th className="px-4 py-3 text-center text-xs font-semibold text-[#6C757D] uppercase tracking-wider">
-                          Location
-                        </th>
-                        <th className="px-4 py-3 text-center text-xs font-semibold text-[#6C757D] uppercase tracking-wider">
-                          Delay
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#E9ECEF]">
-                      {getActiveGroupData().wifiRows.length === 0 &&
-                        !readingWifi && (
-                          <tr>
-                            <td
-                              colSpan={5}
-                              className="px-4 py-12 text-center text-sm text-[#6C757D]"
-                            >
-                              No WiFi status data. Click{" "}
-                              <span className="font-medium text-[#4361EE]">
-                                Wifi
-                              </span>{" "}
-                              to fetch from device.
-                            </td>
-                          </tr>
-                        )}
-                      {readingWifi &&
-                        getActiveGroupData().wifiRows.length === 0 && (
-                          <tr>
-                            <td colSpan={5} className="px-4 py-12 text-center">
-                              <div className="flex items-center justify-center gap-2 text-sm text-[#6C757D]">
-                                <Loader2 className="w-4 h-4 animate-spin text-[#4361EE]" />
-                                Waiting for WiFi status response...
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                      {getActiveGroupData().wifiRows.map((row, index) => (
-                        <tr
-                          key={index}
-                          className="hover:bg-[#F8F9FA] transition-colors"
-                        >
-                          <td className="px-4 py-3 text-center text-sm text-[#212529] font-mono">
-                            {row.publishConfig || "-"}
-                          </td>
-                          <td className="px-4 py-3 text-center text-sm text-[#212529] font-mono">
-                            {row.readConfig || "-"}
-                          </td>
-                          <td className="px-4 py-3 text-center text-sm text-[#212529] font-mono">
-                            {row.wifi || "-"}
-                          </td>
-                          <td className="px-4 py-3 text-center text-sm text-[#212529] font-mono">
-                            {row.location || "-"}
-                          </td>
-                          <td className="px-4 py-3 text-center text-sm text-[#212529] font-mono">
-                            {row.delay || "-"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="px-4 py-3 border-t border-[#E9ECEF] flex justify-end">
+
+              {/* Location Input Section */}
+              <div className="bg-white border border-[#E9ECEF] rounded-xl p-4 mb-4 shadow-sm">
+                <div className="flex items-end gap-3">
+                  <div className="flex-1">
+                    <label className="block text-xs font-medium text-[#6C757D] mb-1.5">
+                      Location Name
+                    </label>
+                    <input
+                      type="text"
+                      value={locationInput}
+                      onChange={e => setLocationInput(e.target.value)}
+                      placeholder="Enter location name"
+                      className="w-40 bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-3 py-2 text-sm text-[#212529] rounded-lg"
+                    />
                   <Button
-                    onClick={handleSave}
-                    disabled={getActiveGroupData().wifiRows.length === 0}
-                    className="h-10 px-5 bg-[#4361EE] hover:bg-[#3A53D0] text-white disabled:opacity-50 cursor-pointer"
+                    onClick={handleSetLocation}
+                    disabled={!prefix || !locationInput}
+                    className="h-10 px-5 ml-2 bg-[#4361EE] hover:bg-[#3A53D0] text-white disabled:opacity-50 cursor-pointer"
                   >
-                    <Save className="w-4 h-4 mr-2" />
-                    Save
+                    Set Location
                   </Button>
+                  <Button
+                    onClick={handleReadLocation}
+                    disabled={!prefix || readingLocation}
+                    variant="outline"
+                    className="h-10 px-5 border-[#4361EE] text-[#4361EE] hover:bg-[#EEF0FE] disabled:opacity-50 cursor-pointer"
+                  >
+                    {readingLocation ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                        Reading...
+                      </>
+                    ) : (
+                      "Read Location"
+                    )}
+                  </Button>
+                  </div>
                 </div>
               </div>
+
+              {/* Location Response Display */}
+              {locationResponse && (
+                <div className="bg-white border border-[#E9ECEF] rounded-xl p-4 shadow-sm">
+                  <h3 className="text-sm font-semibold text-[#212529] mb-2">
+                    Location Response from {prefix}/ReadLocationdetails/res
+                  </h3>
+                  <pre className="bg-[#F8F9FA] border border-[#E9ECEF] rounded-lg p-3 text-sm text-[#212529] font-mono overflow-x-auto">
+                    {locationResponse}
+                  </pre>
+                </div>
+              )}
+
+              {readingLocation && !locationResponse && (
+                <div className="bg-white border border-[#E9ECEF] rounded-xl p-12 shadow-sm">
+                  <div className="flex items-center justify-center gap-2 text-sm text-[#6C757D]">
+                    <Loader2 className="w-4 h-4 animate-spin text-[#4361EE]" />
+                    Waiting for location response...
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Delay Section */}
+          {gateway.data && activeView === "delay" && (
+            <div className="mt-2 animate-fadeIn">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold text-[#212529] tracking-tight">
+                  Delay Configuration
+                </h2>
+              </div>
+
+              {/* Delay Input Section */}
+              <div className="bg-white border border-[#E9ECEF] rounded-xl p-4 mb-4 shadow-sm">
+                <div className="flex">
+                  <div className="flex-1">
+                    <label className="block text-xs font-medium text-[#6C757D] mb-1.5">
+                      Delay Value
+                    </label>
+                    <input
+                      type="text"
+                      value={delayInput}
+                      onChange={e => setDelayInput(e.target.value)}
+                      placeholder="publish interval (seconds)"
+                      className="w-40 bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-3 py-2 text-sm text-[#212529] rounded-lg"
+                    />
+                  <Button
+                    onClick={handleSetDelay}
+                    disabled={!prefix || !delayInput}
+                    className="h-10 ml-4 px-5 bg-[#4361EE] hover:bg-[#3A53D0] text-white disabled:opacity-50 cursor-pointer"
+                  >
+                    Set Interval
+                  </Button>
+                </div>
+                </div>
+              </div>
+
+              {/* Delay Response Display */}
+              {delayResponse && (
+                <div className="bg-white border border-[#E9ECEF] rounded-xl p-4 shadow-sm">
+                  <h3 className="text-sm font-semibold text-[#212529] mb-2">
+                    Delay Response from {prefix}/Delay
+                  </h3>
+                  <pre className="bg-[#F8F9FA] border border-[#E9ECEF] rounded-lg p-3 text-sm text-[#212529] font-mono overflow-x-auto">
+                    {delayResponse}
+                  </pre>
+                </div>
+              )}
             </div>
           )}
         </div>
