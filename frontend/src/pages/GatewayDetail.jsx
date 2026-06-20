@@ -12,7 +12,6 @@ import {
   Save,
   Eye,
   NotebookPen,
-  Minus,
   MapPin,
   Clock,
   BookOpen,
@@ -37,9 +36,7 @@ const EMPTY_ROW = {
   dataType: "Int",
   scaleFactor: 1,
   baudRate: 9600,
-  dataBits: 8,
-  parity: 0,
-  stopBits: 1,
+  serialFormat: "8E1",
 };
 
 function renumberRows(rows) {
@@ -133,10 +130,41 @@ const TABLE_COLUMNS = [
   { key: "dataType", label: "Data Type", type: "text", width: "w-24" },
   { key: "scaleFactor", label: "Scale", type: "number", width: "w-16" },
   { key: "baudRate", label: "Baud Rate", type: "number", width: "w-24" },
-  { key: "dataBits", label: "Data Bits", type: "number", width: "w-20" },
-  { key: "parity", label: "Parity", type: "number", width: "w-16" },
-  { key: "stopBits", label: "Stop Bits", type: "number", width: "w-20" },
+  { key: "serialFormat", label: "Serial Format", type: "text", width: "w-20" },
 ];
+
+const SERIAL_FORMAT_OPTIONS = [
+  "5N1", "6N1", "7N1", "8N1",
+  "5E1", "6E1", "7E1", "8E1",
+  "5O1", "6O1", "7O1", "8O1",
+  "5M1", "6M1", "7M1", "8M1",
+  "5S1", "6S1", "7S1", "8S1",
+  "5N2", "6N2", "7N2", "8N2",
+  "5E2", "6E2", "7E2", "8E2",
+  "5O2", "6O2", "7O2", "8O2",
+  "5M2", "6M2", "7M2", "8M2",
+  "5S2", "6S2", "7S2", "8S2",
+];
+
+function serialFormatToComponents(serialFormat) {
+  const dataBits = parseInt(serialFormat.charAt(0));
+  const parityChar = serialFormat.charAt(1).toUpperCase();
+  const stopBits = parseInt(serialFormat.charAt(2));
+  
+  let parity = 0;
+  if (parityChar === 'E') parity = 1;
+  if (parityChar === 'O') parity = 2;
+  if (parityChar === 'M') parity = 3;
+  if (parityChar === 'S') parity = 4;
+  
+  return { dataBits, parity, stopBits };
+}
+
+function componentsToSerialFormat(dataBits, parity, stopBits) {
+  const parityMap = { 0: 'N', 1: 'E', 2: 'O', 3: 'M', 4: 'S' };
+  const parityChar = parityMap[parity] || 'N';
+  return `${dataBits}${parityChar}${stopBits}`;
+}
 
 export default function GatewayDetail() {
   const { companyId, gatewayId } = useParams();
@@ -181,9 +209,6 @@ export default function GatewayDetail() {
 
   // Active view state ("publish" | "read" | "wifi")
   const [activeView, setActiveView] = useState("publish");
-
-  // Table collapse state
-  const [isTableCollapsed, setIsTableCollapsed] = useState(true);
 
   // Add beforeunload event listener to warn user before leaving
   useEffect(() => {
@@ -296,21 +321,26 @@ export default function GatewayDetail() {
           if (payload.startsWith("[") && payload.endsWith("]")) {
             const parsed = JSON.parse(payload);
             if (Array.isArray(parsed)) {
-              parsedRows = parsed.map(r => ({
-                parameterName: String(r.parameterName ?? ""),
-                deviceName: String(r.deviceName ?? ""),
-                unit: String(r.unit ?? ""),
-                slaveId: Number(r.slaveId ?? 1),
-                functionCode: Number(r.functionCode ?? 3),
-                address: Number(r.address ?? 0),
-                length: Number(r.length ?? 1),
-                dataType: String(r.dataType ?? "Float"),
-                scaleFactor: Number(r.scaleFactor ?? 1),
-                baudRate: Number(r.baudRate ?? 9600),
-                dataBits: Number(r.dataBits ?? 8),
-                parity: Number(r.parity ?? 0),
-                stopBits: Number(r.stopBits ?? 1),
-              }));
+              parsedRows = parsed.map(r => {
+                const dataBits = Number(r.dataBits ?? 8);
+                const parity = Number(r.parity ?? 0);
+                const stopBits = Number(r.stopBits ?? 1);
+                const serialFormat = componentsToSerialFormat(dataBits, parity, stopBits);
+                
+                return {
+                  parameterName: String(r.parameterName ?? ""),
+                  deviceName: String(r.deviceName ?? ""),
+                  unit: String(r.unit ?? ""),
+                  slaveId: Number(r.slaveId ?? 1),
+                  functionCode: Number(r.functionCode ?? 3),
+                  address: Number(r.address ?? 0),
+                  length: Number(r.length ?? 1),
+                  dataType: String(r.dataType ?? "Float"),
+                  scaleFactor: Number(r.scaleFactor ?? 1),
+                  baudRate: Number(r.baudRate ?? 9600),
+                  serialFormat: serialFormat,
+                };
+              });
             }
           }
 
@@ -342,6 +372,8 @@ export default function GatewayDetail() {
                 if (parityLower === "odd") parityVal = 2;
 
                 const sBits = Number(items[i + 12]) || 1;
+                
+                const serialFormat = componentsToSerialFormat(dBits, parityVal, sBits);
 
                 parsedRows.push({
                   parameterName: param,
@@ -354,9 +386,7 @@ export default function GatewayDetail() {
                   dataType: dType,
                   scaleFactor: scale,
                   baudRate: baud,
-                  dataBits: dBits,
-                  parity: parityVal,
-                  stopBits: sBits,
+                  serialFormat: serialFormat,
                 });
               }
             }
@@ -716,14 +746,17 @@ export default function GatewayDetail() {
       const dType = String(r.dataType || "Float").toLowerCase(); // "float" or "int"
       const scale = String(parseFloat(String(r.scaleFactor)) || 1.0);
       const baud = String(parseInt(String(r.baudRate), 10) || 9600);
-      const dBits = String(parseInt(String(r.dataBits), 10) || 8);
-
+      
+      // Parse serialFormat to get individual components
+      const serialFormat = String(r.serialFormat || "8E1");
+      const { dataBits, parity, stopBits } = serialFormatToComponents(serialFormat);
+      const dBits = String(dataBits);
+      
       let parityStr = "none";
-      const parityNum = parseInt(String(r.parity), 10) || 0;
-      if (parityNum === 1) parityStr = "even";
-      if (parityNum === 2) parityStr = "odd";
+      if (parity === 1) parityStr = "even";
+      if (parity === 2) parityStr = "odd";
 
-      const sBits = String(parseInt(String(r.stopBits), 10) || 1);
+      const sBits = String(stopBits);
 
       return [
         param,
@@ -1027,21 +1060,32 @@ export default function GatewayDetail() {
 
         // Validate and transform data based on active view
         if (activeView === "publish" || activeView === "read") {
-          const validRows = jsonData.map(row => ({
-            parameterName: String(row.parameterName || row.ParameterName || ""),
-            deviceName: String(row.deviceName || row.DeviceName || ""),
-            unit: String(row.unit || row.Unit || ""),
-            slaveId: Number(row.slaveId || row.SlaveId || 1),
-            functionCode: Number(row.functionCode || row.FunctionCode || 3),
-            address: Number(row.address || row.Address || 0),
-            length: Number(row.length || row.Length || 1),
-            dataType: String(row.dataType || row.DataType || "Int"),
-            scaleFactor: Number(row.scaleFactor || row.ScaleFactor || 1),
-            baudRate: Number(row.baudRate || row.BaudRate || 9600),
-            dataBits: Number(row.dataBits || row.DataBits || 8),
-            parity: Number(row.parity || row.Parity || 0),
-            stopBits: Number(row.stopBits || row.StopBits || 1),
-          }));
+          const validRows = jsonData.map(row => {
+            // Try to get serialFormat first, otherwise construct from individual components
+            let serialFormat = String(row.serialFormat || row.SerialFormat || "8E1");
+            
+            // If serialFormat is not in the expected format, try to construct from individual components
+            if (!/^[5-8][NEOMS][12]$/.test(serialFormat)) {
+              const dataBits = Number(row.dataBits || row.DataBits || 8);
+              const parity = Number(row.parity || row.Parity || 0);
+              const stopBits = Number(row.stopBits || row.StopBits || 1);
+              serialFormat = componentsToSerialFormat(dataBits, parity, stopBits);
+            }
+            
+            return {
+              parameterName: String(row.parameterName || row.ParameterName || ""),
+              deviceName: String(row.deviceName || row.DeviceName || ""),
+              unit: String(row.unit || row.Unit || ""),
+              slaveId: Number(row.slaveId || row.SlaveId || 1),
+              functionCode: Number(row.functionCode || row.FunctionCode || 3),
+              address: Number(row.address || row.Address || 0),
+              length: Number(row.length || row.Length || 1),
+              dataType: String(row.dataType || row.DataType || "Int"),
+              scaleFactor: Number(row.scaleFactor || row.ScaleFactor || 1),
+              baudRate: Number(row.baudRate || row.BaudRate || 9600),
+              serialFormat: serialFormat,
+            };
+          });
 
           // Limit to PARAMETERS_PER_GROUP
           const limitedRows = validRows.slice(0, PARAMETERS_PER_GROUP);
@@ -1348,41 +1392,24 @@ export default function GatewayDetail() {
                 <table className="w-full min-w-[1200px]">
                   <thead>
                     <tr className="bg-[#F8F9FA] border-b-2 border-[#E9ECEF]">
-                      {TABLE_COLUMNS.map(col => {
-                        // Filter columns based on collapse state
-                        if (isTableCollapsed && ["scaleFactor", "baudRate", "dataBits", "parity", "stopBits"].includes(col.key)) {
-                          return null;
-                        }
-                        return (
-                          <th
-                            key={col.key}
-                            className={`${col.width} px-2 py-3 text-center text-xs font-semibold text-[#6C757D] uppercase tracking-wider`}
-                          >
-                            {col.label}
-                            {col.key === "dataType" && (
-                              <button
-                                onClick={() => setIsTableCollapsed(!isTableCollapsed)}
-                                className="ml-2 p-1 hover:bg-[#E9ECEF] rounded transition-colors cursor-pointer"
-                                title={isTableCollapsed ? "Expand table" : "Collapse table"}
-                              >
-                                {isTableCollapsed ? <Plus className="w-4 h-4" /> : <Minus className="w-4 h-4" />}
-                              </button>
-                            )}
-                          </th>
-                        );
-                      })}
-                      {!isTableCollapsed && (
-                        <th className="w-16 px-2 py-3 text-center text-xs font-semibold text-[#6C757D] uppercase tracking-wider">
-                          Actions
+                      {TABLE_COLUMNS.map(col => (
+                        <th
+                          key={col.key}
+                          className={`${col.width} px-2 py-3 text-center text-xs font-semibold text-[#6C757D] uppercase tracking-wider`}
+                        >
+                          {col.label}
                         </th>
-                      )}
+                      ))}
+                      <th className="w-16 px-2 py-3 text-center text-xs font-semibold text-[#6C757D] uppercase tracking-wider">
+                        Actions
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#E9ECEF]">
                     {getActiveGroupData().publishRows.length === 0 && (
                       <tr>
                         <td
-                          colSpan={isTableCollapsed ? TABLE_COLUMNS.length - 5 : TABLE_COLUMNS.length + 1}
+                          colSpan={TABLE_COLUMNS.length + 1}
                           className="px-4 py-12 text-center text-sm text-[#6C757D]"
                         >
                           No configuration data. Click{" "}
@@ -1399,10 +1426,6 @@ export default function GatewayDetail() {
                         className="hover:bg-[#F8F9FA] transition-colors"
                       >
                         {TABLE_COLUMNS.map(col => {
-                          // Filter columns based on collapse state
-                          if (isTableCollapsed && ["scaleFactor", "baudRate", "dataBits", "parity", "stopBits"].includes(col.key)) {
-                            return null;
-                          }
                           const cellValue = row[col.key] ?? "";
 
                           // Handle serial number column (read-only, auto-increment)
@@ -1439,7 +1462,7 @@ export default function GatewayDetail() {
                             );
                           }
 
-                          if (col.key === "parity") {
+                          if (col.key === "serialFormat") {
                             return (
                               <td
                                 key={col.key}
@@ -1452,49 +1475,11 @@ export default function GatewayDetail() {
                                   }
                                   className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] font-mono text-center [text-align-last:center] rounded-lg cursor-pointer"
                                 >
-                                  <option value="0">0 (None)</option>
-                                  <option value="1">1 (Even)</option>
-                                  <option value="2">2 (Odd)</option>
-                                </select>
-                              </td>
-                            );
-                          }
-
-                          if (col.key === "stopBits") {
-                            return (
-                              <td
-                                key={col.key}
-                                className={`${col.width} px-2 py-2 text-center`}
-                              >
-                                <select
-                                  value={cellValue}
-                                  onChange={e =>
-                                    updateCell(index, col.key, e.target.value)
-                                  }
-                                  className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] font-mono text-center [text-align-last:center] rounded-lg cursor-pointer"
-                                >
-                                  <option value="1">1</option>
-                                  <option value="2">2</option>
-                                </select>
-                              </td>
-                            );
-                          }
-
-                          if (col.key === "dataBits") {
-                            return (
-                              <td
-                                key={col.key}
-                                className={`${col.width} px-2 py-2 text-center`}
-                              >
-                                <select
-                                  value={cellValue}
-                                  onChange={e =>
-                                    updateCell(index, col.key, e.target.value)
-                                  }
-                                  className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] font-mono text-center [text-align-last:center] rounded-lg cursor-pointer"
-                                >
-                                  <option value="8">8</option>
-                                  <option value="7">7</option>
+                                  {SERIAL_FORMAT_OPTIONS.map(option => (
+                                    <option key={option} value={option}>
+                                      {option}
+                                    </option>
+                                  ))}
                                 </select>
                               </td>
                             );
@@ -1708,17 +1693,15 @@ export default function GatewayDetail() {
                             </td>
                           );
                         })}
-                        {!isTableCollapsed && (
-                          <td className="w-16 px-2 py-2 text-center">
-                            <button
-                              onClick={() => removeRow(index)}
-                              className="p-1.5 text-[#ADB5BD] hover:text-[#DC3545] hover:bg-[#FDECEE] rounded-lg transition-colors inline-flex items-center justify-center cursor-pointer"
-                              title="Delete row"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </td>
-                        )}
+                        <td className="w-16 px-2 py-2 text-center">
+                          <button
+                            onClick={() => removeRow(index)}
+                            className="p-1.5 text-[#ADB5BD] hover:text-[#DC3545] hover:bg-[#FDECEE] rounded-lg transition-colors inline-flex items-center justify-center cursor-pointer"
+                            title="Delete row"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1785,41 +1768,24 @@ export default function GatewayDetail() {
                 <table className="w-full min-w-[1200px]">
                   <thead>
                     <tr className="bg-[#F8F9FA] border-b-2 border-[#E9ECEF]">
-                      {TABLE_COLUMNS.map(col => {
-                        // Filter columns based on collapse state
-                        if (isTableCollapsed && ["scaleFactor", "baudRate", "dataBits", "parity", "stopBits"].includes(col.key)) {
-                          return null;
-                        }
-                        return (
-                          <th
-                            key={col.key}
-                            className={`${col.width} px-2 py-3 text-center text-xs font-semibold text-[#6C757D] uppercase tracking-wider`}
-                          >
-                            {col.label}
-                            {col.key === "dataType" && (
-                              <button
-                                onClick={() => setIsTableCollapsed(!isTableCollapsed)}
-                                className="ml-2 p-1 hover:bg-[#E9ECEF] rounded transition-colors cursor-pointer"
-                                title={isTableCollapsed ? "Expand table" : "Collapse table"}
-                              >
-                                {isTableCollapsed ? <Plus className="w-4 h-4" /> : <Minus className="w-4 h-4" />}
-                              </button>
-                            )}
-                          </th>
-                        );
-                      })}
-                      {!isTableCollapsed && (
-                        <th className="w-16 px-2 py-3 text-center text-xs font-semibold text-[#6C757D] uppercase tracking-wider">
-                          Actions
+                      {TABLE_COLUMNS.map(col => (
+                        <th
+                          key={col.key}
+                          className={`${col.width} px-2 py-3 text-center text-xs font-semibold text-[#6C757D] uppercase tracking-wider`}
+                        >
+                          {col.label}
                         </th>
-                      )}
+                      ))}
+                      <th className="w-16 px-2 py-3 text-center text-xs font-semibold text-[#6C757D] uppercase tracking-wider">
+                        Actions
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#E9ECEF]">
                     {getActiveGroupData().readRows.length === 0 && !reading && (
                       <tr>
                         <td
-                          colSpan={isTableCollapsed ? TABLE_COLUMNS.length - 5 : TABLE_COLUMNS.length + 1}
+                          colSpan={TABLE_COLUMNS.length + 1}
                           className="px-4 py-12 text-center text-sm text-[#6C757D]"
                         >
                           No configuration data. Click{" "}
@@ -1833,7 +1799,7 @@ export default function GatewayDetail() {
                     {reading && getActiveGroupData().readRows.length === 0 && (
                       <tr>
                         <td
-                          colSpan={isTableCollapsed ? TABLE_COLUMNS.length - 5 : TABLE_COLUMNS.length + 1}
+                          colSpan={TABLE_COLUMNS.length + 1}
                           className="px-4 py-12 text-center"
                         >
                           <div className="flex items-center justify-center gap-2 text-sm text-[#6C757D]">
@@ -1849,10 +1815,6 @@ export default function GatewayDetail() {
                         className="hover:bg-[#F8F9FA] transition-colors"
                       >
                         {TABLE_COLUMNS.map(col => {
-                          // Filter columns based on collapse state
-                          if (isTableCollapsed && ["scaleFactor", "baudRate", "dataBits", "parity", "stopBits"].includes(col.key)) {
-                            return null;
-                          }
                           const cellValue = row[col.key] ?? "";
 
                           // Handle serial number column (read-only, auto-increment)
@@ -1889,7 +1851,7 @@ export default function GatewayDetail() {
                             );
                           }
 
-                          if (col.key === "parity") {
+                          if (col.key === "serialFormat") {
                             return (
                               <td
                                 key={col.key}
@@ -1902,49 +1864,11 @@ export default function GatewayDetail() {
                                   }
                                   className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] font-mono text-center [text-align-last:center] rounded-lg cursor-pointer"
                                 >
-                                  <option value="0">0 (None)</option>
-                                  <option value="1">1 (Even)</option>
-                                  <option value="2">2 (Odd)</option>
-                                </select>
-                              </td>
-                            );
-                          }
-
-                          if (col.key === "stopBits") {
-                            return (
-                              <td
-                                key={col.key}
-                                className={`${col.width} px-2 py-2 text-center`}
-                              >
-                                <select
-                                  value={cellValue}
-                                  onChange={e =>
-                                    updateCell(index, col.key, e.target.value)
-                                  }
-                                  className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] font-mono text-center [text-align-last:center] rounded-lg cursor-pointer"
-                                >
-                                  <option value="1">1</option>
-                                  <option value="2">2</option>
-                                </select>
-                              </td>
-                            );
-                          }
-
-                          if (col.key === "dataBits") {
-                            return (
-                              <td
-                                key={col.key}
-                                className={`${col.width} px-2 py-2 text-center`}
-                              >
-                                <select
-                                  value={cellValue}
-                                  onChange={e =>
-                                    updateCell(index, col.key, e.target.value)
-                                  }
-                                  className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] font-mono text-center [text-align-last:center] rounded-lg cursor-pointer"
-                                >
-                                  <option value="8">8</option>
-                                  <option value="7">7</option>
+                                  {SERIAL_FORMAT_OPTIONS.map(option => (
+                                    <option key={option} value={option}>
+                                      {option}
+                                    </option>
+                                  ))}
                                 </select>
                               </td>
                             );
@@ -2158,17 +2082,15 @@ export default function GatewayDetail() {
                             </td>
                           );
                         })}
-                        {!isTableCollapsed && (
-                          <td className="w-16 px-2 py-2 text-center">
-                            <button
-                              onClick={() => removeRow(index)}
-                              className="p-1.5 text-[#ADB5BD] hover:text-[#DC3545] hover:bg-[#FDECEE] rounded-lg transition-colors inline-flex items-center justify-center cursor-pointer"
-                              title="Delete row"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </td>
-                        )}
+                        <td className="w-16 px-2 py-2 text-center">
+                          <button
+                            onClick={() => removeRow(index)}
+                            className="p-1.5 text-[#ADB5BD] hover:text-[#DC3545] hover:bg-[#FDECEE] rounded-lg transition-colors inline-flex items-center justify-center cursor-pointer"
+                            title="Delete row"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
