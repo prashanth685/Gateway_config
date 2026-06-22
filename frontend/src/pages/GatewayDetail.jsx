@@ -15,7 +15,6 @@ import {
   MapPin,
   Clock,
   BookOpen,
-
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/providers/trpc";
@@ -36,7 +35,7 @@ const EMPTY_ROW = {
   dataType: "Int",
   scaleFactor: 1,
   baudRate: 9600,
-  serialFormat: "8E1",
+  serialFormat: "8N1",
 };
 
 function renumberRows(rows) {
@@ -134,35 +133,65 @@ const TABLE_COLUMNS = [
 ];
 
 const SERIAL_FORMAT_OPTIONS = [
-  "5N1", "6N1", "7N1", "8N1",
-  "5E1", "6E1", "7E1", "8E1",
-  "5O1", "6O1", "7O1", "8O1",
-  "5M1", "6M1", "7M1", "8M1",
-  "5S1", "6S1", "7S1", "8S1",
-  "5N2", "6N2", "7N2", "8N2",
-  "5E2", "6E2", "7E2", "8E2",
-  "5O2", "6O2", "7O2", "8O2",
-  "5M2", "6M2", "7M2", "8M2",
-  "5S2", "6S2", "7S2", "8S2",
+  "5N1",
+  "6N1",
+  "7N1",
+  "8N1",
+  "5E1",
+  "6E1",
+  "7E1",
+  "8E1",
+  "5O1",
+  "6O1",
+  "7O1",
+  "8O1",
+  "5M1",
+  "6M1",
+  "7M1",
+  "8M1",
+  "5S1",
+  "6S1",
+  "7S1",
+  "8S1",
+  "5N2",
+  "6N2",
+  "7N2",
+  "8N2",
+  "5E2",
+  "6E2",
+  "7E2",
+  "8E2",
+  "5O2",
+  "6O2",
+  "7O2",
+  "8O2",
+  "5M2",
+  "6M2",
+  "7M2",
+  "8M2",
+  "5S2",
+  "6S2",
+  "7S2",
+  "8S2",
 ];
 
 function serialFormatToComponents(serialFormat) {
   const dataBits = parseInt(serialFormat.charAt(0));
   const parityChar = serialFormat.charAt(1).toUpperCase();
   const stopBits = parseInt(serialFormat.charAt(2));
-  
+
   let parity = 0;
-  if (parityChar === 'E') parity = 1;
-  if (parityChar === 'O') parity = 2;
-  if (parityChar === 'M') parity = 3;
-  if (parityChar === 'S') parity = 4;
-  
+  if (parityChar === "E") parity = 1;
+  if (parityChar === "O") parity = 2;
+  if (parityChar === "M") parity = 3;
+  if (parityChar === "S") parity = 4;
+
   return { dataBits, parity, stopBits };
 }
 
 function componentsToSerialFormat(dataBits, parity, stopBits) {
-  const parityMap = { 0: 'N', 1: 'E', 2: 'O', 3: 'M', 4: 'S' };
-  const parityChar = parityMap[parity] || 'N';
+  const parityMap = { 0: "N", 1: "E", 2: "O", 3: "M", 4: "S" };
+  const parityChar = parityMap[parity] || "N";
   return `${dataBits}${parityChar}${stopBits}`;
 }
 
@@ -260,17 +289,21 @@ export default function GatewayDetail() {
     setGroupData(prev => {
       const newData = [...prev];
       const updatedGroup = updater(newData[activeGroup]);
-      
+
       // Apply auto-renumbering and slave conflict resolution for publishRows
       if (updatedGroup.publishRows) {
-        updatedGroup.publishRows = resolveSlaveConflicts(renumberRows(updatedGroup.publishRows));
+        updatedGroup.publishRows = resolveSlaveConflicts(
+          renumberRows(updatedGroup.publishRows)
+        );
       }
-      
+
       // Apply auto-renumbering and slave conflict resolution for readRows
       if (updatedGroup.readRows) {
-        updatedGroup.readRows = resolveSlaveConflicts(renumberRows(updatedGroup.readRows));
+        updatedGroup.readRows = resolveSlaveConflicts(
+          renumberRows(updatedGroup.readRows)
+        );
       }
-      
+
       newData[activeGroup] = updatedGroup;
       return newData;
     });
@@ -288,10 +321,16 @@ export default function GatewayDetail() {
   ];
 
   // Computed device name row spans (consecutive same device names merge)
-  const deviceNameSpans = useMemo(() => computeDeviceNameSpans(currentRows), [currentRows]);
+  const deviceNameSpans = useMemo(
+    () => computeDeviceNameSpans(currentRows),
+    [currentRows]
+  );
 
   // Computed slave ID row spans (consecutive same slave IDs merge)
-  const slaveIdSpans = useMemo(() => computeSlaveIdSpans(currentRows), [currentRows]);
+  const slaveIdSpans = useMemo(
+    () => computeSlaveIdSpans(currentRows),
+    [currentRows]
+  );
 
   // Handle incoming SSE messages (ReadConfig & Wifi responses)
   useEffect(() => {
@@ -325,8 +364,12 @@ export default function GatewayDetail() {
                 const dataBits = Number(r.dataBits ?? 8);
                 const parity = Number(r.parity ?? 0);
                 const stopBits = Number(r.stopBits ?? 1);
-                const serialFormat = componentsToSerialFormat(dataBits, parity, stopBits);
-                
+                const serialFormat = componentsToSerialFormat(
+                  dataBits,
+                  parity,
+                  stopBits
+                );
+
                 return {
                   parameterName: String(r.parameterName ?? ""),
                   deviceName: String(r.deviceName ?? ""),
@@ -372,8 +415,12 @@ export default function GatewayDetail() {
                 if (parityLower === "odd") parityVal = 2;
 
                 const sBits = Number(items[i + 12]) || 1;
-                
-                const serialFormat = componentsToSerialFormat(dBits, parityVal, sBits);
+
+                const serialFormat = componentsToSerialFormat(
+                  dBits,
+                  parityVal,
+                  sBits
+                );
 
                 parsedRows.push({
                   parameterName: param,
@@ -488,14 +535,11 @@ export default function GatewayDetail() {
           );
           return prev;
         }
-        const parameterNumber =
-          activeGroup * PARAMETERS_PER_GROUP + prev.publishRows.length + 1;
-        const newParameterName = `P${parameterNumber}`;
         return {
           ...prev,
           publishRows: [
             ...prev.publishRows,
-            { ...EMPTY_ROW, parameterName: newParameterName },
+            { ...EMPTY_ROW },
           ],
         };
       } else if (activeView === "read") {
@@ -505,20 +549,17 @@ export default function GatewayDetail() {
           );
           return prev;
         }
-        const parameterNumber =
-          activeGroup * PARAMETERS_PER_GROUP + prev.readRows.length + 1;
-        const newParameterName = `P${parameterNumber}`;
         return {
           ...prev,
           readRows: [
             ...prev.readRows,
-            { ...EMPTY_ROW, parameterName: newParameterName },
+            { ...EMPTY_ROW },
           ],
         };
       }
       return prev;
     });
-  }, [activeView, updateActiveGroupData, activeGroup]);
+  }, [activeView, updateActiveGroupData]);
 
   // Add a new row with the same device name as the current row
   const addRowWithDevice = useCallback(
@@ -534,12 +575,8 @@ export default function GatewayDetail() {
           }
           rows = prev.publishRows;
           const currentDevice = rows[index].deviceName;
-          const parameterNumber =
-            activeGroup * PARAMETERS_PER_GROUP + rows.length + 1;
-          const newParameterName = `P${parameterNumber}`;
           const newRow = {
             ...EMPTY_ROW,
-            parameterName: newParameterName,
             deviceName: currentDevice,
           };
           // Insert after the current row
@@ -555,12 +592,8 @@ export default function GatewayDetail() {
           }
           rows = prev.readRows;
           const currentDevice = rows[index].deviceName;
-          const parameterNumber =
-            activeGroup * PARAMETERS_PER_GROUP + rows.length + 1;
-          const newParameterName = `P${parameterNumber}`;
           const newRow = {
             ...EMPTY_ROW,
-            parameterName: newParameterName,
             deviceName: currentDevice,
           };
           // Insert after the current row
@@ -571,7 +604,7 @@ export default function GatewayDetail() {
         return prev;
       });
     },
-    [activeView, updateActiveGroupData, activeGroup]
+    [activeView, updateActiveGroupData]
   );
 
   // Add a new row to a specific device group (inserts after the group's last row)
@@ -603,11 +636,18 @@ export default function GatewayDetail() {
         const slaveId = rows[startIndex]?.slaveId ?? 1;
         // Find end of this consecutive group
         let end = startIndex;
-        while (end + 1 < rows.length && rows[end + 1]?.deviceName === deviceName) {
+        while (
+          end + 1 < rows.length &&
+          rows[end + 1]?.deviceName === deviceName
+        ) {
           end++;
         }
         const newRow = { ...EMPTY_ROW, deviceName, slaveId };
-        const newRows = [...rows.slice(0, end + 1), newRow, ...rows.slice(end + 1)];
+        const newRows = [
+          ...rows.slice(0, end + 1),
+          newRow,
+          ...rows.slice(end + 1),
+        ];
 
         if (activeView === "publish") {
           return { ...prev, publishRows: newRows };
@@ -664,12 +704,18 @@ export default function GatewayDetail() {
 
           // Find start of this consecutive group
           let start = index;
-          while (start > 0 && updated[start - 1]?.deviceName === updated[index]?.deviceName) {
+          while (
+            start > 0 &&
+            updated[start - 1]?.deviceName === updated[index]?.deviceName
+          ) {
             start--;
           }
           // Find end of this consecutive group
           let end = index;
-          while (end + 1 < updated.length && updated[end + 1]?.deviceName === updated[index]?.deviceName) {
+          while (
+            end + 1 < updated.length &&
+            updated[end + 1]?.deviceName === updated[index]?.deviceName
+          ) {
             end++;
           }
           // Update all rows in the group
@@ -746,12 +792,13 @@ export default function GatewayDetail() {
       const dType = String(r.dataType || "Float").toLowerCase(); // "float" or "int"
       const scale = String(parseFloat(String(r.scaleFactor)) || 1.0);
       const baud = String(parseInt(String(r.baudRate), 10) || 9600);
-      
+
       // Parse serialFormat to get individual components
       const serialFormat = String(r.serialFormat || "8E1");
-      const { dataBits, parity, stopBits } = serialFormatToComponents(serialFormat);
+      const { dataBits, parity, stopBits } =
+        serialFormatToComponents(serialFormat);
       const dBits = String(dataBits);
-      
+
       let parityStr = "none";
       if (parity === 1) parityStr = "even";
       if (parity === 2) parityStr = "odd";
@@ -890,8 +937,8 @@ export default function GatewayDetail() {
   // Set Location
   const handleSetLocation = async () => {
     if (!prefix) {
-      const length=locationInput.length <=15;
-      if(!length){
+      const length = locationInput.length <= 15;
+      if (!length) {
         toast.error("Location name must be less than 15 characters");
         return;
       }
@@ -900,7 +947,6 @@ export default function GatewayDetail() {
     }
 
     if (!locationInput) {
-
       toast.error("Please enter location name");
       return;
     }
@@ -1062,18 +1108,26 @@ export default function GatewayDetail() {
         if (activeView === "publish" || activeView === "read") {
           const validRows = jsonData.map(row => {
             // Try to get serialFormat first, otherwise construct from individual components
-            let serialFormat = String(row.serialFormat || row.SerialFormat || "8E1");
-            
+            let serialFormat = String(
+              row.serialFormat || row.SerialFormat || "8E1"
+            );
+
             // If serialFormat is not in the expected format, try to construct from individual components
             if (!/^[5-8][NEOMS][12]$/.test(serialFormat)) {
               const dataBits = Number(row.dataBits || row.DataBits || 8);
               const parity = Number(row.parity || row.Parity || 0);
               const stopBits = Number(row.stopBits || row.StopBits || 1);
-              serialFormat = componentsToSerialFormat(dataBits, parity, stopBits);
+              serialFormat = componentsToSerialFormat(
+                dataBits,
+                parity,
+                stopBits
+              );
             }
-            
+
             return {
-              parameterName: String(row.parameterName || row.ParameterName || ""),
+              parameterName: String(
+                row.parameterName || row.ParameterName || ""
+              ),
               deviceName: String(row.deviceName || row.DeviceName || ""),
               unit: String(row.unit || row.Unit || ""),
               slaveId: Number(row.slaveId || row.SlaveId || 1),
@@ -1235,9 +1289,8 @@ export default function GatewayDetail() {
                     : "text-[#6C757D] hover:text-[#212529]"
                 }`}
               >
-
-              <NotebookPen className="w-4 h-4 mr-2 inline text-[#4361EE]" />
-                Write 
+                <NotebookPen className="w-4 h-4 mr-2 inline text-[#4361EE]" />
+                Write
               </button>
 
               <button
@@ -1249,7 +1302,7 @@ export default function GatewayDetail() {
                 }`}
               >
                 <BookOpen className="w-4 h-4 mr-2 inline text-[#4361EE]" />
-                Read 
+                Read
               </button>
 
               <button
@@ -1290,27 +1343,29 @@ export default function GatewayDetail() {
             </div>
 
             {/* Right Side Import Button */}
-            {activeView !== "wifi" && activeView !== "location" && activeView !== "delay" && (
-              <>
-                <input
-                  type="file"
-                  accept=".xlsx,.xls"
-                  onChange={handleImport}
-                  className="hidden"
-                  id="import-file-input"
-                />
-                <Button
-                  variant="outline"
-                  className="mb-2 border-[#4361EE] text-[#4361EE] cursor-pointer"
-                  onClick={() =>
-                    document.getElementById("import-file-input").click()
-                  }
-                >
-                  <Download className="w-4 h-4 mr-2" />
-                  Import
-                </Button>
-              </>
-            )}
+            {activeView !== "wifi" &&
+              activeView !== "location" &&
+              activeView !== "delay" && (
+                <>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls"
+                    onChange={handleImport}
+                    className="hidden"
+                    id="import-file-input"
+                  />
+                  <Button
+                    variant="outline"
+                    className="mb-2 border-[#4361EE] text-[#4361EE] cursor-pointer"
+                    onClick={() =>
+                      document.getElementById("import-file-input").click()
+                    }
+                  >
+                    <Download className="w-4 h-4 mr-2" />
+                    Import
+                  </Button>
+                </>
+              )}
           </div>
 
           {/* Live Data Banners */}
@@ -1318,7 +1373,8 @@ export default function GatewayDetail() {
             <div className="mb-4 flex items-center gap-2 text-xs bg-[#E0F7FA] border border-[#0DCAF0] text-[#0DCAF0] px-4 py-2.5 rounded-lg">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>
-                Showing live data from {prefix}/Readconfig/G{activeGroup + 1}/res — Group {activeGroup + 1} — not saved to database
+                Showing live data from {prefix}/Readconfig/G{activeGroup + 1}
+                /res — Group {activeGroup + 1} — not saved to database
               </span>
             </div>
           )}
@@ -1326,9 +1382,7 @@ export default function GatewayDetail() {
           {showWifiLiveBanner && activeView === "wifi" && (
             <div className="mb-4 flex items-center gap-2 text-xs bg-[#E8F5E9] border border-[#2E7D32] text-[#2E7D32] px-4 py-2.5 rounded-lg animate-fadeIn">
               <AlertCircle className="w-4 h-4 shrink-0 text-[#2E7D32]" />
-              <span>
-                WiFi response received from {prefix}/Wifi/res
-              </span>
+              <span>WiFi response received from {prefix}/Wifi/res</span>
             </div>
           )}
 
@@ -1342,40 +1396,49 @@ export default function GatewayDetail() {
           )}
 
           {/* Parameter summary bar */}
-          {currentRows.length > 0 && (activeView === "publish" || activeView === "read") && (
-            <div className="mb-4 flex items-center gap-3 text-xs text-[#6C757D] bg-white border border-[#E9ECEF] rounded-lg px-4 py-2.5 flex-wrap">
-              {(() => {
-                const groups = [];
-                let i = 0;
-                while (i < currentRows.length) {
-                  const name = currentRows[i]?.deviceName || "(unnamed)";
-                  let j = i + 1;
-                  while (j < currentRows.length && currentRows[j]?.deviceName === currentRows[i]?.deviceName) {
-                    j++;
+          {currentRows.length > 0 &&
+            (activeView === "publish" || activeView === "read") && (
+              <div className="mb-4 flex items-center gap-3 text-xs text-[#6C757D] bg-white border border-[#E9ECEF] rounded-lg px-4 py-2.5 flex-wrap">
+                {(() => {
+                  const groups = [];
+                  let i = 0;
+                  while (i < currentRows.length) {
+                    const name = currentRows[i]?.deviceName || "(unnamed)";
+                    let j = i + 1;
+                    while (
+                      j < currentRows.length &&
+                      currentRows[j]?.deviceName === currentRows[i]?.deviceName
+                    ) {
+                      j++;
+                    }
+                    groups.push({ name, start: i + 1, end: j });
+                    i = j;
                   }
-                  groups.push({ name, start: i + 1, end: j });
-                  i = j;
-                }
-                return groups.map((g, idx) => {
-                  const count = g.end - g.start + 1;
-                  return (
-                    <span key={idx} className="flex items-center gap-1">
-                      {idx > 0 && <span className="text-[#ADB5BD]">|</span>}
-                      <span className="font-medium text-[#212529]">{g.name}</span>
-                      <span>
-                        P{g.start}–P{g.end}
-                        <span className="text-[#6C757D] ml-0.5">({count})</span>
+                  return groups.map((g, idx) => {
+                    const count = g.end - g.start + 1;
+                    return (
+                      <span key={idx} className="flex items-center gap-1">
+                        {idx > 0 && <span className="text-[#ADB5BD]">|</span>}
+                        <span className="font-medium text-[#212529]">
+                          {g.name}
+                        </span>
+                        <span>
+                          P{g.start}–P{g.end}
+                          <span className="text-[#6C757D] ml-0.5">
+                            ({count})
+                          </span>
+                        </span>
                       </span>
-                    </span>
-                  );
-                });
-              })()}
-              <span className="text-[#ADB5BD]">|</span>
-              <span className="text-[#4361EE] font-medium">
-                Total: {currentRows.length} parameter{currentRows.length !== 1 ? "s" : ""}
-              </span>
-            </div>
-          )}
+                    );
+                  });
+                })()}
+                <span className="text-[#ADB5BD]">|</span>
+                <span className="text-[#4361EE] font-medium">
+                  Total: {currentRows.length} parameter
+                  {currentRows.length !== 1 ? "s" : ""}
+                </span>
+              </div>
+            )}
 
           {/* Loading state */}
           {gateway.isLoading && (
@@ -1498,14 +1561,14 @@ export default function GatewayDetail() {
                                   }
                                   className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] font-mono text-center [text-align-last:center] rounded-lg cursor-pointer"
                                 >
-                                  <option value="1">1 (Coils)</option>
-                                  <option value="2">2 (Inputs)</option>
-                                  <option value="3">3 (Holding)</option>
-                                  <option value="4">4 (Input Reg)</option>
-                                  <option value="5">5 (Write Coil)</option>
+                                  {/* <option value="1">1 (Coils)</option>
+                                  <option value="2">2 (Inputs)</option> */}
+                                  <option value="3">FC03(Holding)</option>
+                                  <option value="4">FC04(Input Reg)</option>
+                                  {/* <option value="5">5 (Write Coil)</option>
                                   <option value="6">6 (Write Reg)</option>
                                   <option value="15">15 (Write Coils)</option>
-                                  <option value="16">16 (Write Regs)</option>
+                                  <option value="16">16 (Write Regs)</option> */}
                                 </select>
                               </td>
                             );
@@ -1537,9 +1600,10 @@ export default function GatewayDetail() {
                                       onClick={() => addRowToDevice(index)}
                                       disabled={
                                         (activeView === "publish"
-                                          ? getActiveGroupData().publishRows.length
-                                          : getActiveGroupData().readRows.length) >=
-                                        PARAMETERS_PER_GROUP
+                                          ? getActiveGroupData().publishRows
+                                              .length
+                                          : getActiveGroupData().readRows
+                                              .length) >= PARAMETERS_PER_GROUP
                                       }
                                       className="p-1 text-[#4361EE] hover:text-[#3A53D0] hover:bg-[#EEF0FE] rounded transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                                       title="Add parameter for this device"
@@ -1577,9 +1641,10 @@ export default function GatewayDetail() {
                                       onClick={() => addRowToDevice(index)}
                                       disabled={
                                         (activeView === "publish"
-                                          ? getActiveGroupData().publishRows.length
-                                          : getActiveGroupData().readRows.length) >=
-                                        PARAMETERS_PER_GROUP
+                                          ? getActiveGroupData().publishRows
+                                              .length
+                                          : getActiveGroupData().readRows
+                                              .length) >= PARAMETERS_PER_GROUP
                                       }
                                       className="p-1 text-[#4361EE] hover:text-[#3A53D0] hover:bg-[#EEF0FE] rounded transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                                       title="Add parameter for this device"
@@ -1613,11 +1678,18 @@ export default function GatewayDetail() {
                                   <select
                                     value={cellValue}
                                     onChange={e => {
-                                      updateCell(index, col.key, e.target.value);
+                                      updateCell(
+                                        index,
+                                        col.key,
+                                        e.target.value
+                                      );
                                     }}
                                     className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
                                   >
-                                    {Array.from({ length: 31 }, (_, i) => i + 1).map(id => (
+                                    {Array.from(
+                                      { length: 31 },
+                                      (_, i) => i + 1
+                                    ).map(id => (
                                       <option key={id} value={id}>
                                         {id}
                                       </option>
@@ -1635,11 +1707,18 @@ export default function GatewayDetail() {
                                   <select
                                     value={cellValue}
                                     onChange={e => {
-                                      updateCell(index, col.key, e.target.value);
+                                      updateCell(
+                                        index,
+                                        col.key,
+                                        e.target.value
+                                      );
                                     }}
                                     className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
                                   >
-                                    {Array.from({ length: 31 }, (_, i) => i + 1).map(id => (
+                                    {Array.from(
+                                      { length: 31 },
+                                      (_, i) => i + 1
+                                    ).map(id => (
                                       <option key={id} value={id}>
                                         {id}
                                       </option>
@@ -1865,7 +1944,11 @@ export default function GatewayDetail() {
                                   className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] font-mono text-center [text-align-last:center] rounded-lg cursor-pointer"
                                 >
                                   {SERIAL_FORMAT_OPTIONS.map(option => (
-                                    <option key={option} value={option}>
+                                    <option
+                                      key={option}
+                                      value={option}
+                                      title=""
+                                    >
                                       {option}
                                     </option>
                                   ))}
@@ -1926,9 +2009,10 @@ export default function GatewayDetail() {
                                       onClick={() => addRowToDevice(index)}
                                       disabled={
                                         (activeView === "publish"
-                                          ? getActiveGroupData().publishRows.length
-                                          : getActiveGroupData().readRows.length) >=
-                                        PARAMETERS_PER_GROUP
+                                          ? getActiveGroupData().publishRows
+                                              .length
+                                          : getActiveGroupData().readRows
+                                              .length) >= PARAMETERS_PER_GROUP
                                       }
                                       className="p-1 text-[#4361EE] hover:text-[#3A53D0] hover:bg-[#EEF0FE] rounded transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                                       title="Add parameter for this device"
@@ -1966,9 +2050,10 @@ export default function GatewayDetail() {
                                       onClick={() => addRowToDevice(index)}
                                       disabled={
                                         (activeView === "publish"
-                                          ? getActiveGroupData().publishRows.length
-                                          : getActiveGroupData().readRows.length) >=
-                                        PARAMETERS_PER_GROUP
+                                          ? getActiveGroupData().publishRows
+                                              .length
+                                          : getActiveGroupData().readRows
+                                              .length) >= PARAMETERS_PER_GROUP
                                       }
                                       className="p-1 text-[#4361EE] hover:text-[#3A53D0] hover:bg-[#EEF0FE] rounded transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                                       title="Add parameter for this device"
@@ -2002,11 +2087,18 @@ export default function GatewayDetail() {
                                   <select
                                     value={cellValue}
                                     onChange={e => {
-                                      updateCell(index, col.key, e.target.value);
+                                      updateCell(
+                                        index,
+                                        col.key,
+                                        e.target.value
+                                      );
                                     }}
                                     className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
                                   >
-                                    {Array.from({ length: 31 }, (_, i) => i + 1).map(id => (
+                                    {Array.from(
+                                      { length: 31 },
+                                      (_, i) => i + 1
+                                    ).map(id => (
                                       <option key={id} value={id}>
                                         {id}
                                       </option>
@@ -2024,11 +2116,18 @@ export default function GatewayDetail() {
                                   <select
                                     value={cellValue}
                                     onChange={e => {
-                                      updateCell(index, col.key, e.target.value);
+                                      updateCell(
+                                        index,
+                                        col.key,
+                                        e.target.value
+                                      );
                                     }}
                                     className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
                                   >
-                                    {Array.from({ length: 31 }, (_, i) => i + 1).map(id => (
+                                    {Array.from(
+                                      { length: 31 },
+                                      (_, i) => i + 1
+                                    ).map(id => (
                                       <option key={id} value={id}>
                                         {id}
                                       </option>
@@ -2175,28 +2274,37 @@ export default function GatewayDetail() {
                   </pre>
                 </div>
               )} */}
-              {wifiResponse && (() => {
-  const [ssid, password] = wifiResponse.split(",");
+              {wifiResponse &&
+                (() => {
+                  const [ssid, password] = wifiResponse.split(",");
 
-  return (
-    <div className="bg-white border border-[#E9ECEF] rounded-xl p-4 shadow-sm">
-      <table className="w-full border border-[#E9ECEF]">
-        <thead>
-          <tr className="bg-[#F8F9FA]">
-            <th className="border border-[#E9ECEF] p-2 text-left">SSID</th>
-            <th className="border border-[#E9ECEF] p-2 text-left">Password</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td className="border border-[#E9ECEF] p-2">{ssid}</td>
-            <td className="border border-[#E9ECEF] p-2">{password}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  );
-})()}
+                  return (
+                    <div className="bg-white border border-[#E9ECEF] rounded-xl p-4 shadow-sm">
+                      <table className="w-full border border-[#E9ECEF]">
+                        <thead>
+                          <tr className="bg-[#F8F9FA]">
+                            <th className="border border-[#E9ECEF] p-2 text-left">
+                              SSID
+                            </th>
+                            <th className="border border-[#E9ECEF] p-2 text-left">
+                              Password
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td className="border border-[#E9ECEF] p-2">
+                              {ssid}
+                            </td>
+                            <td className="border border-[#E9ECEF] p-2">
+                              {password}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
 
               {readingWifi && !wifiResponse && (
                 <div className="bg-white border border-[#E9ECEF] rounded-xl p-12 shadow-sm">
@@ -2232,28 +2340,28 @@ export default function GatewayDetail() {
                       placeholder="Enter location name"
                       className="w-40 bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-3 py-2 text-sm text-[#212529] rounded-lg"
                     />
-                  <Button
-                    onClick={handleSetLocation}
-                    disabled={!prefix || !locationInput}
-                    className="h-10 px-5 ml-2 bg-[#4361EE] hover:bg-[#3A53D0] text-white disabled:opacity-50 cursor-pointer"
-                  >
-                    Set Location
-                  </Button>
-                  <Button
-                    onClick={handleReadLocation}
-                    disabled={!prefix || readingLocation}
-                    variant="outline"
-                    className="h-10 px-5 border-[#4361EE] text-[#4361EE] hover:bg-[#EEF0FE] disabled:opacity-50 cursor-pointer"
-                  >
-                    {readingLocation ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                        Reading...
-                      </>
-                    ) : (
-                      "Read Location"
-                    )}
-                  </Button>
+                    <Button
+                      onClick={handleSetLocation}
+                      disabled={!prefix || !locationInput}
+                      className="h-10 px-5 ml-2 bg-[#4361EE] hover:bg-[#3A53D0] text-white disabled:opacity-50 cursor-pointer"
+                    >
+                      Set Location
+                    </Button>
+                    <Button
+                      onClick={handleReadLocation}
+                      disabled={!prefix || readingLocation}
+                      variant="outline"
+                      className="h-10 px-5 border-[#4361EE] text-[#4361EE] hover:bg-[#EEF0FE] disabled:opacity-50 cursor-pointer"
+                    >
+                      {readingLocation ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                          Reading...
+                        </>
+                      ) : (
+                        "Read Location"
+                      )}
+                    </Button>
                   </div>
                 </div>
               </div>
@@ -2304,14 +2412,14 @@ export default function GatewayDetail() {
                       placeholder="publish interval (seconds)"
                       className="w-40 bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-3 py-2 text-sm text-[#212529] rounded-lg"
                     />
-                  <Button
-                    onClick={handleSetDelay}
-                    disabled={!prefix || !delayInput}
-                    className="h-10 ml-4 px-5 bg-[#4361EE] hover:bg-[#3A53D0] text-white disabled:opacity-50 cursor-pointer"
-                  >
-                    Set Interval
-                  </Button>
-                </div>
+                    <Button
+                      onClick={handleSetDelay}
+                      disabled={!prefix || !delayInput}
+                      className="h-10 ml-4 px-5 bg-[#4361EE] hover:bg-[#3A53D0] text-white disabled:opacity-50 cursor-pointer"
+                    >
+                      Set Interval
+                    </Button>
+                  </div>
                 </div>
               </div>
 
