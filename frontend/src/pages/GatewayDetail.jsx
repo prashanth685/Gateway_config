@@ -133,46 +133,46 @@ const TABLE_COLUMNS = [
 ];
 
 const SERIAL_FORMAT_OPTIONS = [
-  "5N1",
-  "6N1",
-  "7N1",
-  "8N1",
-  "5E1",
-  "6E1",
-  "7E1",
-  "8E1",
-  "5O1",
-  "6O1",
-  "7O1",
-  "8O1",
-  "5M1",
-  "6M1",
-  "7M1",
-  "8M1",
-  "5S1",
-  "6S1",
-  "7S1",
-  "8S1",
-  "5N2",
-  "6N2",
-  "7N2",
-  "8N2",
-  "5E2",
-  "6E2",
-  "7E2",
-  "8E2",
-  "5O2",
-  "6O2",
-  "7O2",
-  "8O2",
-  "5M2",
-  "6M2",
-  "7M2",
-  "8M2",
-  "5S2",
-  "6S2",
-  "7S2",
-  "8S2",
+  { value: "5N1", label: "5N1 - 5 data bits, No parity, 1 stop bit" },
+  { value: "6N1", label: "6N1 - 6 data bits, No parity, 1 stop bit" },
+  { value: "7N1", label: "7N1 - 7 data bits, No parity, 1 stop bit" },
+  { value: "8N1", label: "8N1 - 8 data bits, No parity, 1 stop bit (most common)" },
+  { value: "5E1", label: "5E1 - 5 data bits, Even parity, 1 stop bit" },
+  { value: "6E1", label: "6E1 - 6 data bits, Even parity, 1 stop bit" },
+  { value: "7E1", label: "7E1 - 7 data bits, Even parity, 1 stop bit" },
+  { value: "8E1", label: "8E1 - 8 data bits, Even parity, 1 stop bit" },
+  { value: "5O1", label: "5O1 - 5 data bits, Odd parity, 1 stop bit" },
+  { value: "6O1", label: "6O1 - 6 data bits, Odd parity, 1 stop bit" },
+  { value: "7O1", label: "7O1 - 7 data bits, Odd parity, 1 stop bit" },
+  { value: "8O1", label: "8O1 - 8 data bits, Odd parity, 1 stop bit" },
+  { value: "5M1", label: "5M1 - 5 data bits, Mark parity, 1 stop bit" },
+  { value: "6M1", label: "6M1 - 6 data bits, Mark parity, 1 stop bit" },
+  { value: "7M1", label: "7M1 - 7 data bits, Mark parity, 1 stop bit" },
+  { value: "8M1", label: "8M1 - 8 data bits, Mark parity, 1 stop bit" },
+  { value: "5S1", label: "5S1 - 5 data bits, Space parity, 1 stop bit" },
+  { value: "6S1", label: "6S1 - 6 data bits, Space parity, 1 stop bit" },
+  { value: "7S1", label: "7S1 - 7 data bits, Space parity, 1 stop bit" },
+  { value: "8S1", label: "8S1 - 8 data bits, Space parity, 1 stop bit" },
+  { value: "5N2", label: "5N2 - 5 data bits, No parity, 2 stop bits" },
+  { value: "6N2", label: "6N2 - 6 data bits, No parity, 2 stop bits" },
+  { value: "7N2", label: "7N2 - 7 data bits, No parity, 2 stop bits" },
+  { value: "8N2", label: "8N2 - 8 data bits, No parity, 2 stop bits" },
+  { value: "5E2", label: "5E2 - 5 data bits, Even parity, 2 stop bits" },
+  { value: "6E2", label: "6E2 - 6 data bits, Even parity, 2 stop bits" },
+  { value: "7E2", label: "7E2 - 7 data bits, Even parity, 2 stop bits" },
+  { value: "8E2", label: "8E2 - 8 data bits, Even parity, 2 stop bits" },
+  { value: "5O2", label: "5O2 - 5 data bits, Odd parity, 2 stop bits" },
+  { value: "6O2", label: "6O2 - 6 data bits, Odd parity, 2 stop bits" },
+  { value: "7O2", label: "7O2 - 7 data bits, Odd parity, 2 stop bits" },
+  { value: "8O2", label: "8O2 - 8 data bits, Odd parity, 2 stop bits" },
+  { value: "5M2", label: "5M2 - 5 data bits, Mark parity, 2 stop bits" },
+  { value: "6M2", label: "6M2 - 6 data bits, Mark parity, 2 stop bits" },
+  { value: "7M2", label: "7M2 - 7 data bits, Mark parity, 2 stop bits" },
+  { value: "8M2", label: "8M2 - 8 data bits, Mark parity, 2 stop bits" },
+  { value: "5S2", label: "5S2 - 5 data bits, Space parity, 2 stop bits" },
+  { value: "6S2", label: "6S2 - 6 data bits, Space parity, 2 stop bits" },
+  { value: "7S2", label: "7S2 - 7 data bits, Space parity, 2 stop bits" },
+  { value: "8S2", label: "8S2 - 8 data bits, Space parity, 2 stop bits" },
 ];
 
 function serialFormatToComponents(serialFormat) {
@@ -339,7 +339,7 @@ export default function GatewayDetail() {
     const latestMessage = messages[messages.length - 1];
     if (latestMessage.type === "message" && latestMessage.payload) {
       const payload = latestMessage.payload.trim();
-      const topic = (latestMessage.topic || "").toLowerCase();
+      const topic = latestMessage.topic || "";
 
       // 1. Modbus Config response (ends with /readconfig/res or /Readconfig/G{group}/res)
       if (
@@ -459,8 +459,8 @@ export default function GatewayDetail() {
         }
       }
 
-      // 2. Wifi response (ends with /wifi/res)
-      if (topic.endsWith("/wifi/res")) {
+      // 2. Wifi response (ends with /Wifi/res)
+      if (topic.endsWith("/Wifi/res")) {
         setActiveView("wifi");
         setReadingWifi(false);
         setWifiResponse(payload);
@@ -535,11 +535,14 @@ export default function GatewayDetail() {
           );
           return prev;
         }
+        const parameterNumber =
+          activeGroup * PARAMETERS_PER_GROUP + prev.publishRows.length + 1;
+        const newParameterName = `P${parameterNumber}`;
         return {
           ...prev,
           publishRows: [
             ...prev.publishRows,
-            { ...EMPTY_ROW },
+            { ...EMPTY_ROW, parameterName: newParameterName },
           ],
         };
       } else if (activeView === "read") {
@@ -549,17 +552,20 @@ export default function GatewayDetail() {
           );
           return prev;
         }
+        const parameterNumber =
+          activeGroup * PARAMETERS_PER_GROUP + prev.readRows.length + 1;
+        const newParameterName = `P${parameterNumber}`;
         return {
           ...prev,
           readRows: [
             ...prev.readRows,
-            { ...EMPTY_ROW },
+            { ...EMPTY_ROW, parameterName: newParameterName },
           ],
         };
       }
       return prev;
     });
-  }, [activeView, updateActiveGroupData]);
+  }, [activeView, updateActiveGroupData, activeGroup]);
 
   // Add a new row with the same device name as the current row
   const addRowWithDevice = useCallback(
@@ -575,8 +581,12 @@ export default function GatewayDetail() {
           }
           rows = prev.publishRows;
           const currentDevice = rows[index].deviceName;
+          const parameterNumber =
+            activeGroup * PARAMETERS_PER_GROUP + rows.length + 1;
+          const newParameterName = `P${parameterNumber}`;
           const newRow = {
             ...EMPTY_ROW,
+            parameterName: newParameterName,
             deviceName: currentDevice,
           };
           // Insert after the current row
@@ -592,8 +602,12 @@ export default function GatewayDetail() {
           }
           rows = prev.readRows;
           const currentDevice = rows[index].deviceName;
+          const parameterNumber =
+            activeGroup * PARAMETERS_PER_GROUP + rows.length + 1;
+          const newParameterName = `P${parameterNumber}`;
           const newRow = {
             ...EMPTY_ROW,
+            parameterName: newParameterName,
             deviceName: currentDevice,
           };
           // Insert after the current row
@@ -604,7 +618,7 @@ export default function GatewayDetail() {
         return prev;
       });
     },
-    [activeView, updateActiveGroupData]
+    [activeView, updateActiveGroupData, activeGroup]
   );
 
   // Add a new row to a specific device group (inserts after the group's last row)
@@ -1539,8 +1553,8 @@ export default function GatewayDetail() {
                                   className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] font-mono text-center [text-align-last:center] rounded-lg cursor-pointer"
                                 >
                                   {SERIAL_FORMAT_OPTIONS.map(option => (
-                                    <option key={option} value={option}>
-                                      {option}
+                                    <option key={option.value} value={option.value} title={option.label}>
+                                      {option.value}
                                     </option>
                                   ))}
                                 </select>
@@ -1945,11 +1959,11 @@ export default function GatewayDetail() {
                                 >
                                   {SERIAL_FORMAT_OPTIONS.map(option => (
                                     <option
-                                      key={option}
-                                      value={option}
-                                      title=""
+                                      key={option.value}
+                                      value={option.value}
+                                      title={option.label}
                                     >
-                                      {option}
+                                      {option.value}
                                     </option>
                                   ))}
                                 </select>
