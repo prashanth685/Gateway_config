@@ -14,6 +14,8 @@ import {
   NotebookPen,
   MapPin,
   Clock,
+  FolderUp,
+  FolderDown,
   BookOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -30,15 +32,60 @@ const EMPTY_ROW = {
   unit: "",
   slaveId: "",
   functionCode: 3,
-  address: 0,
+  address: "",
   length: 1,
   dataType: "Int",
   scaleFactor: 1,
-  baudRate: 9600,
+  baudRate: 115200,
   serialFormat: "8N1",
+  decimal: 0, // New field: 0 = none, 1 = 1 decimal, 2 = 2 decimals
 };
 
+// Helper function to get the next available parameter number
+function getNextParameterNumber(rows) {
+  if (rows.length === 0) return 1;
+
+  // Extract all parameter numbers from existing rows
+  const numbers = rows
+    .map(row => {
+      const match = row.parameterName?.match(/^P(\d+)$/);
+      return match ? parseInt(match[1]) : 0;
+    })
+    .filter(num => num > 0);
+
+  if (numbers.length === 0) return 1;
+
+  // Find the maximum number and add 1
+  return Math.max(...numbers) + 1;
+}
+
+// Only renumber when specifically needed (e.g., after import or conflict resolution)
 function renumberRows(rows) {
+  // Only renumber if there are gaps or duplicates in the numbering
+  const numbers = rows
+    .map(row => {
+      const match = row.parameterName?.match(/^P(\d+)$/);
+      return match ? parseInt(match[1]) : 0;
+    })
+    .filter(num => num > 0);
+
+  if (numbers.length === 0) return rows;
+
+  // Check if numbers are sequential starting from 1
+  const sorted = [...numbers].sort((a, b) => a - b);
+  let needsRenumber = false;
+
+  // Check for duplicates or gaps
+  for (let i = 0; i < sorted.length; i++) {
+    if (sorted[i] !== i + 1) {
+      needsRenumber = true;
+      break;
+    }
+  }
+
+  if (!needsRenumber) return rows;
+
+  // Renumber all rows sequentially
   return rows.map((row, i) => ({
     ...row,
     parameterName: `P${i + 1}`,
@@ -80,7 +127,33 @@ function resolveSlaveConflicts(rows) {
     i = j;
   }
 
-  return changed ? updated : rows;
+  // If we changed slave IDs, we might need to renumber to avoid gaps
+  // But we only renumber if absolutely necessary (duplicates or major gaps)
+  if (changed) {
+    // Check if renumbering is needed
+    const numbers = updated
+      .map(row => {
+        const match = row.parameterName?.match(/^P(\d+)$/);
+        return match ? parseInt(match[1]) : 0;
+      })
+      .filter(num => num > 0);
+
+    if (numbers.length > 0) {
+      const sorted = [...numbers].sort((a, b) => a - b);
+      let needsRenumber = false;
+      for (let i = 0; i < sorted.length; i++) {
+        if (sorted[i] !== i + 1) {
+          needsRenumber = true;
+          break;
+        }
+      }
+      if (needsRenumber) {
+        return renumberRows(updated);
+      }
+    }
+  }
+
+  return updated;
 }
 
 function computeDeviceNameSpans(rows) {
@@ -128,6 +201,7 @@ const TABLE_COLUMNS = [
   { key: "length", label: "Length", type: "number", width: "w-16" },
   { key: "dataType", label: "Data Type", type: "text", width: "w-24" },
   { key: "scaleFactor", label: "Scale", type: "number", width: "w-16" },
+  { key: "decimal", label: "Decimal", type: "number", width: "w-16" },
   { key: "baudRate", label: "Baud Rate", type: "number", width: "w-24" },
   { key: "serialFormat", label: "Serial Format", type: "text", width: "w-20" },
 ];
@@ -136,7 +210,10 @@ const SERIAL_FORMAT_OPTIONS = [
   { value: "5N1", label: "5N1 - 5 data bits, No parity, 1 stop bit" },
   { value: "6N1", label: "6N1 - 6 data bits, No parity, 1 stop bit" },
   { value: "7N1", label: "7N1 - 7 data bits, No parity, 1 stop bit" },
-  { value: "8N1", label: "8N1 - 8 data bits, No parity, 1 stop bit (most common)" },
+  {
+    value: "8N1",
+    label: "8N1 - 8 data bits, No parity, 1 stop bit (most common)",
+  },
   { value: "5E1", label: "5E1 - 5 data bits, Even parity, 1 stop bit" },
   { value: "6E1", label: "6E1 - 6 data bits, Even parity, 1 stop bit" },
   { value: "7E1", label: "7E1 - 7 data bits, Even parity, 1 stop bit" },
@@ -173,6 +250,24 @@ const SERIAL_FORMAT_OPTIONS = [
   { value: "6S2", label: "6S2 - 6 data bits, Space parity, 2 stop bits" },
   { value: "7S2", label: "7S2 - 7 data bits, Space parity, 2 stop bits" },
   { value: "8S2", label: "8S2 - 8 data bits, Space parity, 2 stop bits" },
+];
+
+const BAUD_RATE_OPTIONS = [
+  { value: 110, label: "110" },
+  { value: 300, label: "300" },
+  { value: 600, label: "600" },
+  { value: 1200, label: "1200" },
+  { value: 2400, label: "2400" },
+  { value: 4800, label: "4800" },
+  { value: 9600, label: "9600" },
+  { value: 14400, label: "14400" },
+  { value: 19200, label: "19200" },
+  { value: 38400, label: "38400" },
+  { value: 57600, label: "57600" },
+  { value: 115200, label: "115200" },
+  { value: 230400, label: "230400" },
+  { value: 460800, label: "460800" },
+  { value: 921600, label: "921600" },
 ];
 
 function serialFormatToComponents(serialFormat) {
@@ -239,6 +334,13 @@ export default function GatewayDetail() {
   // Active view state ("publish" | "read" | "wifi")
   const [activeView, setActiveView] = useState("publish");
 
+  // Validation error state
+  const [validationErrors, setValidationErrors] = useState([]);
+
+  // Merge dialog state
+  const [showMergeDialog, setShowMergeDialog] = useState(false);
+  const [mergeData, setMergeData] = useState(null);
+
   // Add beforeunload event listener to warn user before leaving
   useEffect(() => {
     const handleBeforeUnload = e => {
@@ -290,18 +392,15 @@ export default function GatewayDetail() {
       const newData = [...prev];
       const updatedGroup = updater(newData[activeGroup]);
 
-      // Apply auto-renumbering and slave conflict resolution for publishRows
+      // Apply slave conflict resolution but DO NOT auto-renumber on every update
       if (updatedGroup.publishRows) {
         updatedGroup.publishRows = resolveSlaveConflicts(
-          renumberRows(updatedGroup.publishRows)
+          updatedGroup.publishRows
         );
       }
 
-      // Apply auto-renumbering and slave conflict resolution for readRows
       if (updatedGroup.readRows) {
-        updatedGroup.readRows = resolveSlaveConflicts(
-          renumberRows(updatedGroup.readRows)
-        );
+        updatedGroup.readRows = resolveSlaveConflicts(updatedGroup.readRows);
       }
 
       newData[activeGroup] = updatedGroup;
@@ -331,6 +430,76 @@ export default function GatewayDetail() {
     () => computeSlaveIdSpans(currentRows),
     [currentRows]
   );
+
+  // Check if device name already exists in the current view
+  const checkDuplicateDeviceName = (deviceName, currentIndex) => {
+    if (!deviceName || !deviceName.trim()) return null;
+
+    const rows =
+      activeView === "publish" ? activeData.publishRows : activeData.readRows;
+
+    // Find if this device name exists in any other row
+    for (let i = 0; i < rows.length; i++) {
+      if (i === currentIndex) continue; // Skip the current row being edited
+
+      const existingDeviceName = rows[i]?.deviceName?.trim();
+      if (existingDeviceName === deviceName.trim()) {
+        // Found a duplicate
+        return {
+          existingIndex: i,
+          existingDevice: existingDeviceName,
+          existingRows: rows.filter(
+            (r, idx) => r.deviceName?.trim() === deviceName.trim()
+          ),
+        };
+      }
+    }
+
+    return null;
+  };
+
+  // Function to handle merging device data
+  const mergeDevices = (currentIndex, deviceName) => {
+    const rows =
+      activeView === "publish" ? activeData.publishRows : activeData.readRows;
+
+    // Find all rows with the duplicate device name
+    const duplicateRows = rows.filter(
+      (r, idx) =>
+        r.deviceName?.trim() === deviceName.trim() && idx !== currentIndex
+    );
+
+    // Update all rows to use the merged device name
+    updateActiveGroupData(prev => {
+      let updatedRows;
+      if (activeView === "publish") {
+        updatedRows = [...prev.publishRows];
+      } else {
+        updatedRows = [...prev.readRows];
+      }
+
+      // Update all rows in the current group to use the merged device name
+      const currentDeviceName = updatedRows[currentIndex]?.deviceName?.trim();
+      updatedRows = updatedRows.map((row, idx) => {
+        if (
+          row.deviceName?.trim() === currentDeviceName ||
+          idx === currentIndex
+        ) {
+          return { ...row, deviceName: deviceName.trim() };
+        }
+        return row;
+      });
+
+      // Apply slave conflict resolution and return
+      const resolvedRows = resolveSlaveConflicts(updatedRows);
+
+      if (activeView === "publish") {
+        return { ...prev, publishRows: resolvedRows };
+      } else {
+        return { ...prev, readRows: resolvedRows };
+      }
+    });
+  };
 
   // Handle incoming SSE messages (ReadConfig & Wifi responses)
   useEffect(() => {
@@ -380,47 +549,48 @@ export default function GatewayDetail() {
                   length: Number(r.length ?? 1),
                   dataType: String(r.dataType ?? "Float"),
                   scaleFactor: Number(r.scaleFactor ?? 1),
-                  baudRate: Number(r.baudRate ?? 9600),
+                  decimal: Number(r.decimal ?? 0),
+                  baudRate: Number(r.baudRate ?? 115200),
                   serialFormat: serialFormat,
                 };
               });
             }
           }
 
-          // Option 2: Parse as flat comma-separated list of quoted values
+          // Option 2: Parse as flat comma-separated list of quoted values with colon separator
           if (payload.startsWith('"') && payload.endsWith('"')) {
-            const raw = payload.slice(1, -1);
-            const items = raw.split('","');
-            if (items.length > 0 && items.length % 13 === 0) {
-              for (let i = 0; i < items.length; i += 13) {
-                const param = items[i];
-                const device = items[i + 1];
-                const unit = items[i + 2];
-                const slave = Number(items[i + 3]) || 1;
-                const func = Number(items[i + 4]) || 3;
-                const addr = Number(items[i + 5]) || 0;
-                const len = Number(items[i + 6]) || 1;
+            // Split by colon to get individual parameters
+            const parameters = payload.split(":");
 
-                let dType = items[i + 7];
+            parameters.forEach(paramStr => {
+              // Remove outer quotes if present
+              const cleanStr =
+                paramStr.startsWith('"') && paramStr.endsWith('"')
+                  ? paramStr.slice(1, -1)
+                  : paramStr;
+
+              const items = cleanStr.split('","');
+
+              if (items.length === 12) {
+                // 12 values per parameter (13 fields total including decimal)
+                const param = items[0];
+                const device = items[1];
+                const unit = items[2];
+                const slave = Number(items[3]) || 1;
+                const func = Number(items[4]) || 3;
+                const addr = Number(items[5]) || 0;
+                const len = Number(items[6]) || 1;
+
+                let dType = items[7];
                 if (dType.toLowerCase() === "int") dType = "Int";
                 if (dType.toLowerCase() === "float") dType = "Float";
 
-                const scale = Number(items[i + 8]) || 1.0;
-                const baud = Number(items[i + 9]) || 9600;
-                const dBits = Number(items[i + 10]) || 8;
+                const scale = Number(items[8]) || 1.0;
+                const decimal = Number(items[9]) || 0;
+                const baud = Number(items[10]) || 9600;
 
-                let parityVal = 0;
-                const parityLower = items[i + 11].toLowerCase();
-                if (parityLower === "even") parityVal = 1;
-                if (parityLower === "odd") parityVal = 2;
-
-                const sBits = Number(items[i + 12]) || 1;
-
-                const serialFormat = componentsToSerialFormat(
-                  dBits,
-                  parityVal,
-                  sBits
-                );
+                // Serial format is now a single string (e.g., "8N1")
+                const serialFormat = items[11] || "8N1";
 
                 parsedRows.push({
                   parameterName: param,
@@ -432,11 +602,12 @@ export default function GatewayDetail() {
                   length: len,
                   dataType: dType,
                   scaleFactor: scale,
+                  decimal: decimal,
                   baudRate: baud,
                   serialFormat: serialFormat,
                 });
               }
-            }
+            });
           }
 
           // Append batch data to existing readRows for the specific group
@@ -528,44 +699,26 @@ export default function GatewayDetail() {
   // Add a new row
   const addRow = useCallback(() => {
     updateActiveGroupData(prev => {
+      const rows = activeView === "publish" ? prev.publishRows : prev.readRows;
+      const maxParams = PARAMETERS_PER_GROUP;
+
+      if (rows.length >= maxParams) {
+        toast.error(`Maximum ${maxParams} parameters allowed per group`);
+        return prev;
+      }
+
+      const nextNumber = getNextParameterNumber(rows);
+      const newParameterName = `P${nextNumber}`;
+      const newRow = { ...EMPTY_ROW, parameterName: newParameterName };
+
       if (activeView === "publish") {
-        if (prev.publishRows.length >= PARAMETERS_PER_GROUP) {
-          toast.error(
-            `Maximum ${PARAMETERS_PER_GROUP} parameters allowed per group`
-          );
-          return prev;
-        }
-        const parameterNumber =
-          activeGroup * PARAMETERS_PER_GROUP + prev.publishRows.length + 1;
-        const newParameterName = `P${parameterNumber}`;
-        return {
-          ...prev,
-          publishRows: [
-            ...prev.publishRows,
-            { ...EMPTY_ROW, parameterName: newParameterName },
-          ],
-        };
+        return { ...prev, publishRows: [...prev.publishRows, newRow] };
       } else if (activeView === "read") {
-        if (prev.readRows.length >= PARAMETERS_PER_GROUP) {
-          toast.error(
-            `Maximum ${PARAMETERS_PER_GROUP} parameters allowed per group`
-          );
-          return prev;
-        }
-        const parameterNumber =
-          activeGroup * PARAMETERS_PER_GROUP + prev.readRows.length + 1;
-        const newParameterName = `P${parameterNumber}`;
-        return {
-          ...prev,
-          readRows: [
-            ...prev.readRows,
-            { ...EMPTY_ROW, parameterName: newParameterName },
-          ],
-        };
+        return { ...prev, readRows: [...prev.readRows, newRow] };
       }
       return prev;
     });
-  }, [activeView, updateActiveGroupData, activeGroup]);
+  }, [activeView, updateActiveGroupData]);
 
   // Add a new row with the same device name as the current row
   const addRowWithDevice = useCallback(
@@ -573,52 +726,51 @@ export default function GatewayDetail() {
       updateActiveGroupData(prev => {
         let rows;
         if (activeView === "publish") {
-          if (prev.publishRows.length >= PARAMETERS_PER_GROUP) {
-            toast.error(
-              `Maximum ${PARAMETERS_PER_GROUP} parameters allowed per group`
-            );
-            return prev;
-          }
           rows = prev.publishRows;
-          const currentDevice = rows[index].deviceName;
-          const parameterNumber =
-            activeGroup * PARAMETERS_PER_GROUP + rows.length + 1;
-          const newParameterName = `P${parameterNumber}`;
-          const newRow = {
-            ...EMPTY_ROW,
-            parameterName: newParameterName,
-            deviceName: currentDevice,
-          };
-          // Insert after the current row
-          const newRows = [...rows];
-          newRows.splice(index + 1, 0, newRow);
-          return { ...prev, publishRows: newRows };
-        } else if (activeView === "read") {
-          if (prev.readRows.length >= PARAMETERS_PER_GROUP) {
+          if (rows.length >= PARAMETERS_PER_GROUP) {
             toast.error(
               `Maximum ${PARAMETERS_PER_GROUP} parameters allowed per group`
             );
             return prev;
           }
+        } else if (activeView === "read") {
           rows = prev.readRows;
-          const currentDevice = rows[index].deviceName;
-          const parameterNumber =
-            activeGroup * PARAMETERS_PER_GROUP + rows.length + 1;
-          const newParameterName = `P${parameterNumber}`;
-          const newRow = {
-            ...EMPTY_ROW,
-            parameterName: newParameterName,
-            deviceName: currentDevice,
-          };
-          // Insert after the current row
-          const newRows = [...rows];
-          newRows.splice(index + 1, 0, newRow);
+          if (rows.length >= PARAMETERS_PER_GROUP) {
+            toast.error(
+              `Maximum ${PARAMETERS_PER_GROUP} parameters allowed per group`
+            );
+            return prev;
+          }
+        } else {
+          return prev;
+        }
+
+        const currentDevice = rows[index]?.deviceName || "";
+        const slaveId = rows[index]?.slaveId || 1;
+
+        // Get the next available parameter number globally
+        const nextNumber = getNextParameterNumber(rows);
+        const newParameterName = `P${nextNumber}`;
+
+        const newRow = {
+          ...EMPTY_ROW,
+          parameterName: newParameterName,
+          deviceName: currentDevice,
+          slaveId: slaveId,
+        };
+
+        // Insert after the current row
+        const newRows = [...rows];
+        newRows.splice(index + 1, 0, newRow);
+
+        if (activeView === "publish") {
+          return { ...prev, publishRows: newRows };
+        } else {
           return { ...prev, readRows: newRows };
         }
-        return prev;
       });
     },
-    [activeView, updateActiveGroupData, activeGroup]
+    [activeView, updateActiveGroupData]
   );
 
   // Add a new row to a specific device group (inserts after the group's last row)
@@ -627,27 +779,28 @@ export default function GatewayDetail() {
       updateActiveGroupData(prev => {
         let rows;
         if (activeView === "publish") {
-          if (prev.publishRows.length >= PARAMETERS_PER_GROUP) {
-            toast.error(
-              `Maximum ${PARAMETERS_PER_GROUP} parameters allowed per group`
-            );
-            return prev;
-          }
           rows = prev.publishRows;
-        } else if (activeView === "read") {
-          if (prev.readRows.length >= PARAMETERS_PER_GROUP) {
+          if (rows.length >= PARAMETERS_PER_GROUP) {
             toast.error(
               `Maximum ${PARAMETERS_PER_GROUP} parameters allowed per group`
             );
             return prev;
           }
+        } else if (activeView === "read") {
           rows = prev.readRows;
+          if (rows.length >= PARAMETERS_PER_GROUP) {
+            toast.error(
+              `Maximum ${PARAMETERS_PER_GROUP} parameters allowed per group`
+            );
+            return prev;
+          }
         } else {
           return prev;
         }
 
-        const deviceName = rows[startIndex]?.deviceName ?? "";
-        const slaveId = rows[startIndex]?.slaveId ?? 1;
+        const deviceName = rows[startIndex]?.deviceName || "";
+        const slaveId = rows[startIndex]?.slaveId || 1;
+
         // Find end of this consecutive group
         let end = startIndex;
         while (
@@ -656,7 +809,18 @@ export default function GatewayDetail() {
         ) {
           end++;
         }
-        const newRow = { ...EMPTY_ROW, deviceName, slaveId };
+
+        // Get the next available parameter number globally
+        const nextNumber = getNextParameterNumber(rows);
+        const newParameterName = `P${nextNumber}`;
+
+        const newRow = {
+          ...EMPTY_ROW,
+          parameterName: newParameterName,
+          deviceName: deviceName,
+          slaveId: slaveId,
+        };
+
         const newRows = [
           ...rows.slice(0, end + 1),
           newRow,
@@ -673,19 +837,22 @@ export default function GatewayDetail() {
     [activeView, updateActiveGroupData]
   );
 
-  // Remove a row
+  // Remove a row - DOES NOT renumber
   const removeRow = useCallback(
     index => {
       updateActiveGroupData(prev => {
         if (activeView === "publish") {
+          // Just remove the row, don't renumber
+          const newRows = prev.publishRows.filter((_, i) => i !== index);
           return {
             ...prev,
-            publishRows: prev.publishRows.filter((_, i) => i !== index),
+            publishRows: newRows,
           };
         } else if (activeView === "read") {
+          const newRows = prev.readRows.filter((_, i) => i !== index);
           return {
             ...prev,
-            readRows: prev.readRows.filter((_, i) => i !== index),
+            readRows: newRows,
           };
         }
         return prev;
@@ -784,11 +951,139 @@ export default function GatewayDetail() {
     return batches;
   };
 
+  // Validate rows before publishing
+  const validateRows = rows => {
+    const errors = [];
+    const deviceGroups = {};
+
+    rows.forEach((row, index) => {
+      const rowNumber = index + 1;
+      const deviceName = row.deviceName?.trim() || "";
+      const parameterName = row.parameterName?.trim() || "";
+      const slaveId = row.slaveId;
+      const address = row.address;
+      const functionCode = row.functionCode;
+
+      // Check for missing device name
+      if (!deviceName) {
+        errors.push({
+          row: rowNumber,
+          parameter: parameterName || `Row ${rowNumber}`,
+          field: "deviceName",
+          message: `Device Name is missing`,
+        });
+      } else if (deviceName.length > 15) {
+        errors.push({
+          row: rowNumber,
+          parameter: parameterName || `Row ${rowNumber}`,
+          field: "deviceName",
+          message: `Device Name "${deviceName}" exceeds 15 characters (${deviceName.length})`,
+        });
+      }
+
+      // Check for missing parameter name
+      if (!parameterName) {
+        errors.push({
+          row: rowNumber,
+          parameter: `Row ${rowNumber}`,
+          field: "parameterName",
+          message: `Parameter Name is missing`,
+        });
+      }
+
+      // Check for missing slave ID
+      if (!slaveId || slaveId === "") {
+        errors.push({
+          row: rowNumber,
+          parameter: parameterName || `Row ${rowNumber}`,
+          field: "slaveId",
+          message: `Slave ID is missing`,
+        });
+      }
+
+      // Check for missing address
+      if (address === undefined || address === null || address === "") {
+        errors.push({
+          row: rowNumber,
+          parameter: parameterName || `Row ${rowNumber}`,
+          field: "address",
+          message: `Address is missing`,
+        });
+      }
+
+      // Check for missing function code
+      if (!functionCode || functionCode === "") {
+        errors.push({
+          row: rowNumber,
+          parameter: parameterName || `Row ${rowNumber}`,
+          field: "functionCode",
+          message: `Function Code is missing`,
+        });
+      }
+
+      // Group errors by device name
+      if (deviceName) {
+        if (!deviceGroups[deviceName]) {
+          deviceGroups[deviceName] = [];
+        }
+        deviceGroups[deviceName].push(rowNumber);
+      }
+    });
+
+    return { errors, deviceGroups };
+  };
+
   // Publish Config (Setconfig) - Batch-wise publishing for active group
   const handlePublish = async () => {
     if (!prefix) return;
     const activeData = getActiveGroupData();
-    if (activeData.publishRows.length === 0) return;
+    if (activeData.publishRows.length === 0) {
+      toast.error("No data to publish");
+      return;
+    }
+
+    // Validate rows
+    const { errors, deviceGroups } = validateRows(activeData.publishRows);
+
+    if (errors.length > 0) {
+      setValidationErrors(errors);
+
+      // Create error message with details
+      let errorMessage = `❌ Validation failed: ${errors.length} error(s) found.\n\n`;
+      errorMessage += "═".repeat(60) + "\n";
+      errorMessage += "│ #  │ Parameter      │ Field         │ Message\n";
+      errorMessage += "═".repeat(60) + "\n";
+
+      errors.forEach(err => {
+        const rowStr = String(err.row).padStart(3);
+        const paramStr = (err.parameter || "").padEnd(14).slice(0, 14);
+        const fieldStr = err.field.padEnd(14).slice(0, 14);
+        const messageStr = err.message.slice(0, 25);
+        errorMessage += `│ ${rowStr} │ ${paramStr} │ ${fieldStr} │ ${messageStr}\n`;
+      });
+
+      errorMessage += "═".repeat(60) + "\n\n";
+
+      // Show device summary
+      errorMessage += "📊 Device Summary:\n";
+      Object.keys(deviceGroups).forEach(device => {
+        const count = deviceGroups[device].length;
+        errorMessage += `  • ${device}: ${count} parameter(s)\n`;
+      });
+
+      // Show in toast with long duration
+      toast.error(
+        <div className="whitespace-pre-wrap font-mono text-xs">
+          {errorMessage}
+        </div>,
+        { duration: 10000 }
+      );
+
+      return;
+    }
+
+    // Clear validation errors if no errors
+    setValidationErrors([]);
 
     setActiveView("publish");
     setPublishing(true);
@@ -803,21 +1098,13 @@ export default function GatewayDetail() {
       const func = String(parseInt(String(r.functionCode), 10) || 3);
       const addr = String(parseInt(String(r.address), 10) || 0);
       const len = String(parseInt(String(r.length), 10) || 1);
-      const dType = String(r.dataType || "Float").toLowerCase(); // "float" or "int"
+      const dType = String(r.dataType || "Float").toLowerCase();
       const scale = String(parseFloat(String(r.scaleFactor)) || 1.0);
-      const baud = String(parseInt(String(r.baudRate), 10) || 9600);
+      const decimal = String(parseInt(String(r.decimal), 10) || 0);
+      const baud = String(parseInt(String(r.baudRate), 10) || 115200);
 
-      // Parse serialFormat to get individual components
-      const serialFormat = String(r.serialFormat || "8E1");
-      const { dataBits, parity, stopBits } =
-        serialFormatToComponents(serialFormat);
-      const dBits = String(dataBits);
-
-      let parityStr = "none";
-      if (parity === 1) parityStr = "even";
-      if (parity === 2) parityStr = "odd";
-
-      const sBits = String(stopBits);
+      // Get the serial format as a single string (e.g., "8N1")
+      const serialFormat = String(r.serialFormat || "8N1");
 
       return [
         param,
@@ -829,10 +1116,9 @@ export default function GatewayDetail() {
         len,
         dType,
         scale,
+        decimal,
         baud,
-        dBits,
-        parityStr,
-        sBits,
+        serialFormat,
       ];
     };
 
@@ -848,8 +1134,18 @@ export default function GatewayDetail() {
       for (let i = 0; i < batches.length; i++) {
         const batch = batches[i];
         const batchRows = rowsToPublish.slice(batch.start, batch.end);
-        const allValues = batchRows.flatMap(getRowValues);
-        const payloadString = allValues.map(v => `"${v}"`).join(",");
+
+        // Build the payload with colon separator between parameters
+        const parameterStrings = [];
+        batchRows.forEach(row => {
+          const rowValues = getRowValues(row);
+          // Join each parameter's values with commas
+          const paramString = rowValues.map(v => `"${v}"`).join(",");
+          parameterStrings.push(paramString);
+        });
+
+        // Join parameters with colon
+        const payloadString = parameterStrings.join(":");
 
         await publishMutation.mutateAsync({
           topic: `${prefix}/Setconfig/G${activeGroup + 1}`,
@@ -866,6 +1162,9 @@ export default function GatewayDetail() {
       }
 
       setPublishSuccess(true);
+      toast.success(
+        `✅ Successfully published ${rowsToPublish.length} parameters to Group ${activeGroup + 1}`
+      );
       setTimeout(() => setPublishSuccess(false), 2000);
 
       // Auto-enable and switch to next group after completing current group
@@ -880,6 +1179,7 @@ export default function GatewayDetail() {
       }
     } catch (err) {
       console.error("Publish failed:", err);
+      toast.error("Failed to publish configuration");
     } finally {
       setPublishing(false);
       setPublishProgress({ current: 0, total: 0 });
@@ -1123,7 +1423,7 @@ export default function GatewayDetail() {
           const validRows = jsonData.map(row => {
             // Try to get serialFormat first, otherwise construct from individual components
             let serialFormat = String(
-              row.serialFormat || row.SerialFormat || "8E1"
+              row.serialFormat || row.SerialFormat || "8N1"
             );
 
             // If serialFormat is not in the expected format, try to construct from individual components
@@ -1150,6 +1450,7 @@ export default function GatewayDetail() {
               length: Number(row.length || row.Length || 1),
               dataType: String(row.dataType || row.DataType || "Int"),
               scaleFactor: Number(row.scaleFactor || row.ScaleFactor || 1),
+              decimal: Number(row.decimal || row.Decimal || 0),
               baudRate: Number(row.baudRate || row.BaudRate || 9600),
               serialFormat: serialFormat,
             };
@@ -1203,27 +1504,6 @@ export default function GatewayDetail() {
               <h1 className="text-2xl font-semibold text-[#212529] tracking-tight">
                 {gateway.data?.prefix ?? "Loading..."}
               </h1>
-              {/* {testStatus === "connected" ? (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium bg-[#E6F4EA] text-[#198754] px-2.5 py-1 rounded-full">
-                  <Wifi className="w-3 h-3" />
-                  Connected
-                </span>
-              ) : testStatus === "disconnected" ? (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium bg-[#FDECEE] text-[#DC3545] px-2.5 py-1 rounded-full">
-                  <WifiOff className="w-3 h-3" />
-                  Disconnected
-                </span>
-              ) : sseConnected ? (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium bg-[#E6F4EA] text-[#198754] px-2.5 py-1 rounded-full">
-                  <Wifi className="w-3 h-3" />
-                  Connected
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium bg-[#FDECEE] text-[#DC3545] px-2.5 py-1 rounded-full">
-                  <WifiOff className="w-3 h-3" />
-                  Disconnected
-                </span>
-              )} */}
             </div>
             {gateway.data?.company && (
               <p className="text-sm text-[#6C757D] mt-1">
@@ -1368,16 +1648,26 @@ export default function GatewayDetail() {
                     className="hidden"
                     id="import-file-input"
                   />
-                  <Button
-                    variant="outline"
-                    className="mb-2 border-[#4361EE] text-[#4361EE] cursor-pointer"
-                    onClick={() =>
-                      document.getElementById("import-file-input").click()
-                    }
-                  >
-                    <Download className="w-4 h-4 mr-2" />
-                    Import
-                  </Button>
+                  <div className="flex">
+                    <Button
+                      variant="outline"
+                      className="border-[#4361EE] text-[#4361EE] cursor-pointer"
+                      onClick={() =>
+                        document.getElementById("import-file-input").click()
+                      }
+                    >
+                      <FolderDown className="w-4 h-4 mr-2" />
+                      Import
+                    </Button>
+                    <Button
+                      onClick={handleSave}
+                      disabled={getActiveGroupData().publishRows.length === 0}
+                      className="h-10 px-5  text-[#4361EE] disabled:opacity-50 cursor-pointer ml-2"
+                    >
+                      <FolderUp className="w-4 h-4 mr-2" />
+                      Export
+                    </Button>
+                  </div>
                 </>
               )}
           </div>
@@ -1408,51 +1698,6 @@ export default function GatewayDetail() {
               </span>
             </div>
           )}
-
-          {/* Parameter summary bar */}
-          {currentRows.length > 0 &&
-            (activeView === "publish" || activeView === "read") && (
-              <div className="mb-4 flex items-center gap-3 text-xs text-[#6C757D] bg-white border border-[#E9ECEF] rounded-lg px-4 py-2.5 flex-wrap">
-                {(() => {
-                  const groups = [];
-                  let i = 0;
-                  while (i < currentRows.length) {
-                    const name = currentRows[i]?.deviceName || "(unnamed)";
-                    let j = i + 1;
-                    while (
-                      j < currentRows.length &&
-                      currentRows[j]?.deviceName === currentRows[i]?.deviceName
-                    ) {
-                      j++;
-                    }
-                    groups.push({ name, start: i + 1, end: j });
-                    i = j;
-                  }
-                  return groups.map((g, idx) => {
-                    const count = g.end - g.start + 1;
-                    return (
-                      <span key={idx} className="flex items-center gap-1">
-                        {idx > 0 && <span className="text-[#ADB5BD]">|</span>}
-                        <span className="font-medium text-[#212529]">
-                          {g.name}
-                        </span>
-                        <span>
-                          P{g.start}–P{g.end}
-                          <span className="text-[#6C757D] ml-0.5">
-                            ({count})
-                          </span>
-                        </span>
-                      </span>
-                    );
-                  });
-                })()}
-                <span className="text-[#ADB5BD]">|</span>
-                <span className="text-[#4361EE] font-medium">
-                  Total: {currentRows.length} parameter
-                  {currentRows.length !== 1 ? "s" : ""}
-                </span>
-              </div>
-            )}
 
           {/* Loading state */}
           {gateway.isLoading && (
@@ -1497,222 +1742,41 @@ export default function GatewayDetail() {
                         </td>
                       </tr>
                     )}
-                    {getActiveGroupData().publishRows.map((row, index) => (
-                      <tr
-                        key={index}
-                        className="hover:bg-[#F8F9FA] transition-colors"
-                      >
-                        {TABLE_COLUMNS.map(col => {
-                          const cellValue = row[col.key] ?? "";
+                    {getActiveGroupData().publishRows.map((row, index) => {
+                      const rows = getActiveGroupData().publishRows;
+                      // Check if this row has validation errors
+                      const rowErrors = validationErrors.filter(
+                        err => err.row === index + 1
+                      );
+                      const hasError = rowErrors.length > 0;
 
-                          // Handle serial number column (read-only, auto-increment)
-                          if (col.isSerial) {
-                            return (
-                              <td
-                                key={col.key}
-                                className={`${col.width} px-2 py-2 text-center`}
-                              >
-                                <span className="text-sm text-[#212529] font-medium">
-                                  {index + 1}
-                                </span>
-                              </td>
+                      return (
+                        <tr
+                          key={index}
+                          className={`hover:bg-[#F8F9FA] transition-colors ${hasError ? "bg-red-50" : ""}`}
+                        >
+                          {TABLE_COLUMNS.map(col => {
+                            const cellValue = row[col.key] ?? "";
+                            // Check if this specific field has an error
+                            const fieldError = rowErrors.find(
+                              err => err.field === col.key
                             );
-                          }
 
-                          if (col.key === "dataType") {
-                            return (
-                              <td
-                                key={col.key}
-                                className={`${col.width} px-2 py-2 text-center`}
-                              >
-                                <select
-                                  value={cellValue}
-                                  onChange={e =>
-                                    updateCell(index, col.key, e.target.value)
-                                  }
-                                  className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
-                                >
-                                  <option value="Int">Int</option>
-                                  <option value="Float">Float</option>
-                                </select>
-                              </td>
-                            );
-                          }
-
-                          if (col.key === "serialFormat") {
-                            return (
-                              <td
-                                key={col.key}
-                                className={`${col.width} px-2 py-2 text-center`}
-                              >
-                                <select
-                                  value={cellValue}
-                                  onChange={e =>
-                                    updateCell(index, col.key, e.target.value)
-                                  }
-                                  className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] font-mono text-center [text-align-last:center] rounded-lg cursor-pointer"
-                                >
-                                  {SERIAL_FORMAT_OPTIONS.map(option => (
-                                    <option key={option.value} value={option.value} title={option.label}>
-                                      {option.value}
-                                    </option>
-                                  ))}
-                                </select>
-                              </td>
-                            );
-                          }
-
-                          if (col.key === "functionCode") {
-                            return (
-                              <td
-                                key={col.key}
-                                className={`${col.width} px-2 py-2 text-center`}
-                              >
-                                <select
-                                  value={cellValue}
-                                  onChange={e =>
-                                    updateCell(index, col.key, e.target.value)
-                                  }
-                                  className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] font-mono text-center [text-align-last:center] rounded-lg cursor-pointer"
-                                >
-                                  {/* <option value="1">1 (Coils)</option>
-                                  <option value="2">2 (Inputs)</option> */}
-                                  <option value="3">FC03(Holding)</option>
-                                  <option value="4">FC04(Input Reg)</option>
-                                  {/* <option value="5">5 (Write Coil)</option>
-                                  <option value="6">6 (Write Reg)</option>
-                                  <option value="15">15 (Write Coils)</option>
-                                  <option value="16">16 (Write Regs)</option> */}
-                                </select>
-                              </td>
-                            );
-                          }
-
-                          if (col.key === "deviceName") {
-                            const rowSpan = deviceNameSpans.get(index);
-                            if (rowSpan && rowSpan > 1) {
-                              // This is the start of a group - render with rowSpan
-                              return (
-                                <td
-                                  key={col.key}
-                                  rowSpan={rowSpan}
-                                  className={`${col.width} px-2 py-2 text-center align-middle`}
-                                >
-                                  <div className="flex items-center gap-1">
-                                    <input
-                                      list={`device-list-${index}`}
-                                      type="text"
-                                      value={cellValue}
-                                      placeholder="Type or select device"
-                                      onChange={e => {
-                                        const val = e.target.value;
-                                        updateCell(index, col.key, val);
-                                      }}
-                                      className="flex-1 bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
-                                    />
-                                    <button
-                                      onClick={() => addRowToDevice(index)}
-                                      disabled={
-                                        (activeView === "publish"
-                                          ? getActiveGroupData().publishRows
-                                              .length
-                                          : getActiveGroupData().readRows
-                                              .length) >= PARAMETERS_PER_GROUP
-                                      }
-                                      className="p-1 text-[#4361EE] hover:text-[#3A53D0] hover:bg-[#EEF0FE] rounded transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                                      title="Add parameter for this device"
-                                    >
-                                      <Plus className="w-4 h-4" />
-                                    </button>
-                                  </div>
-                                  <datalist id={`device-list-${index}`}>
-                                    {deviceOptions.map((opt, i) => (
-                                      <option key={i} value={opt} />
-                                    ))}
-                                  </datalist>
-                                </td>
-                              );
-                            } else if (rowSpan === 1) {
-                              // Single row - render normally
+                            // Handle serial number column (read-only, auto-increment)
+                            if (col.isSerial) {
                               return (
                                 <td
                                   key={col.key}
                                   className={`${col.width} px-2 py-2 text-center`}
                                 >
-                                  <div className="flex items-center gap-1">
-                                    <input
-                                      list={`device-list-${index}`}
-                                      type="text"
-                                      value={cellValue}
-                                      placeholder="Type or select device"
-                                      onChange={e => {
-                                        const val = e.target.value;
-                                        updateCell(index, col.key, val);
-                                      }}
-                                      className="flex-1 bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
-                                    />
-                                    <button
-                                      onClick={() => addRowToDevice(index)}
-                                      disabled={
-                                        (activeView === "publish"
-                                          ? getActiveGroupData().publishRows
-                                              .length
-                                          : getActiveGroupData().readRows
-                                              .length) >= PARAMETERS_PER_GROUP
-                                      }
-                                      className="p-1 text-[#4361EE] hover:text-[#3A53D0] hover:bg-[#EEF0FE] rounded transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                                      title="Add parameter for this device"
-                                    >
-                                      <Plus className="w-4 h-4" />
-                                    </button>
-                                  </div>
-                                  <datalist id={`device-list-${index}`}>
-                                    {deviceOptions.map((opt, i) => (
-                                      <option key={i} value={opt} />
-                                    ))}
-                                  </datalist>
+                                  <span className="text-sm text-[#212529] font-medium">
+                                    {index + 1}
+                                  </span>
                                 </td>
                               );
-                            } else {
-                              // Part of a merged group - skip rendering
-                              return null;
                             }
-                          }
 
-                          if (col.key === "slaveId") {
-                            const rowSpan = slaveIdSpans.get(index);
-                            if (rowSpan && rowSpan > 1) {
-                              // This is the start of a group - render with rowSpan
-                              return (
-                                <td
-                                  key={col.key}
-                                  rowSpan={rowSpan}
-                                  className={`${col.width} px-2 py-2 text-center align-middle`}
-                                >
-                                  <select
-                                    value={cellValue}
-                                    onChange={e => {
-                                      updateCell(
-                                        index,
-                                        col.key,
-                                        e.target.value
-                                      );
-                                    }}
-                                    className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
-                                  >
-                                    {Array.from(
-                                      { length: 31 },
-                                      (_, i) => i + 1
-                                    ).map(id => (
-                                      <option key={id} value={id}>
-                                        {id}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </td>
-                              );
-                            } else if (rowSpan === 1) {
-                              // Single row - render normally
+                            if (col.key === "dataType") {
                               return (
                                 <td
                                   key={col.key}
@@ -1720,83 +1784,428 @@ export default function GatewayDetail() {
                                 >
                                   <select
                                     value={cellValue}
-                                    onChange={e => {
-                                      updateCell(
-                                        index,
-                                        col.key,
-                                        e.target.value
-                                      );
-                                    }}
-                                    className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
+                                    onChange={e =>
+                                      updateCell(index, col.key, e.target.value)
+                                    }
+                                    className={`w-full bg-white border ${fieldError ? "border-red-500 ring-1 ring-red-500" : "border-[#E9ECEF]"} focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer`}
                                   >
-                                    {Array.from(
-                                      { length: 31 },
-                                      (_, i) => i + 1
-                                    ).map(id => (
-                                      <option key={id} value={id}>
-                                        {id}
+                                    <option value="Int">Int</option>
+                                    <option value="Float">Float</option>
+                                  </select>
+                                  {fieldError && (
+                                    <div className="text-xs text-red-500 mt-0.5">
+                                      {fieldError.message}
+                                    </div>
+                                  )}
+                                </td>
+                              );
+                            }
+
+                            if (col.key === "serialFormat") {
+                              return (
+                                <td
+                                  key={col.key}
+                                  className={`${col.width} px-2 py-2 text-center`}
+                                >
+                                  <select
+                                    value={cellValue}
+                                    onChange={e =>
+                                      updateCell(index, col.key, e.target.value)
+                                    }
+                                    className={`w-full bg-white border ${fieldError ? "border-red-500 ring-1 ring-red-500" : "border-[#E9ECEF]"} focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] font-mono text-center [text-align-last:center] rounded-lg cursor-pointer`}
+                                  >
+                                    {SERIAL_FORMAT_OPTIONS.map(option => (
+                                      <option
+                                        key={option.value}
+                                        value={option.value}
+                                        title={option.label}
+                                      >
+                                        {option.value}
                                       </option>
                                     ))}
                                   </select>
+                                  {fieldError && (
+                                    <div className="text-xs text-red-500 mt-0.5">
+                                      {fieldError.message}
+                                    </div>
+                                  )}
                                 </td>
                               );
-                            } else {
-                              // Part of a merged group - skip rendering
-                              return null;
                             }
-                          }
 
-                          if (col.key === "parameterName") {
+                            if (col.key === "functionCode") {
+                              return (
+                                <td
+                                  key={col.key}
+                                  className={`${col.width} px-2 py-2 text-center`}
+                                >
+                                  <select
+                                    value={cellValue}
+                                    onChange={e =>
+                                      updateCell(index, col.key, e.target.value)
+                                    }
+                                    className={`w-full bg-white border ${fieldError ? "border-red-500 ring-1 ring-red-500" : "border-[#E9ECEF]"} focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] font-mono text-center [text-align-last:center] rounded-lg cursor-pointer`}
+                                  >
+                                    <option value="3">FC03(Holding)</option>
+                                    <option value="4">FC04(Input Reg)</option>
+                                  </select>
+                                  {fieldError && (
+                                    <div className="text-xs text-red-500 mt-0.5">
+                                      {fieldError.message}
+                                    </div>
+                                  )}
+                                </td>
+                              );
+                            }
+
+                            if (col.key === "decimal") {
+                              return (
+                                <td
+                                  key={col.key}
+                                  className={`${col.width} px-2 py-2 text-center`}
+                                >
+                                  <select
+                                    value={cellValue}
+                                    onChange={e =>
+                                      updateCell(
+                                        index,
+                                        col.key,
+                                        parseInt(e.target.value) || 0
+                                      )
+                                    }
+                                    className={`w-full bg-white border ${fieldError ? "border-red-500 ring-1 ring-red-500" : "border-[#E9ECEF]"} focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer`}
+                                  >
+                                    <option value="0">0 (None)</option>
+                                    <option value="1">1</option>
+                                    <option value="2">2</option>
+                                    <option value="3">3</option>
+                                    <option value="4">4</option>
+                                  </select>
+                                  {fieldError && (
+                                    <div className="text-xs text-red-500 mt-0.5">
+                                      {fieldError.message}
+                                    </div>
+                                  )}
+                                </td>
+                              );
+                            }
+                            if (col.key === "baudRate") {
+                              return (
+                                <td
+                                  key={col.key}
+                                  className={`${col.width} px-2 py-2 text-center`}
+                                >
+                                  <select
+                                    value={cellValue}
+                                    onChange={e =>
+                                      updateCell(
+                                        index,
+                                        col.key,
+                                        parseInt(e.target.value) || 115200
+                                      )
+                                    }
+                                    className={`w-full bg-white border ${fieldError ? "border-red-500 ring-1 ring-red-500" : "border-[#E9ECEF]"} focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer`}
+                                  >
+                                    {BAUD_RATE_OPTIONS.map(option => (
+                                      <option
+                                        key={option.value}
+                                        value={option.value}
+                                      >
+                                        {option.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {fieldError && (
+                                    <div className="text-xs text-red-500 mt-0.5">
+                                      {fieldError.message}
+                                    </div>
+                                  )}
+                                </td>
+                              );
+                            }
+
+                            if (col.key === "deviceName") {
+                              const rowSpan = deviceNameSpans.get(index);
+                              if (rowSpan && rowSpan > 1) {
+                                // This is the start of a group - render with rowSpan
+                                // Calculate parameter range for this device
+                                let paramStart = index + 1;
+                                let paramEnd = index + rowSpan;
+                                const paramCount = rowSpan;
+
+                                return (
+                                  <td
+                                    key={col.key}
+                                    rowSpan={rowSpan}
+                                    className={`${col.width} px-2 py-2 text-center align-top ${fieldError ? "border-l-2 border-red-500" : ""}`}
+                                  >
+                                    <div className="flex items-center gap-1">
+                                      <input
+                                        list={`device-list-${index}`}
+                                        type="text"
+                                        value={cellValue}
+                                        placeholder="Type or select device"
+                                        onChange={e => {
+                                          const val = e.target.value;
+                                          const duplicate =
+                                            checkDuplicateDeviceName(
+                                              val,
+                                              index
+                                            );
+
+                                          if (duplicate) {
+                                            // Show merge dialog
+                                            setMergeData({
+                                              currentIndex: index,
+                                              currentDevice:
+                                                rows[index]?.deviceName || "",
+                                              existingDevice:
+                                                duplicate.existingDevice,
+                                              newDeviceName: val.trim(),
+                                              rows: duplicate.existingRows,
+                                            });
+                                            setShowMergeDialog(true);
+                                          } else {
+                                            // Just update normally
+                                            updateCell(index, col.key, val);
+                                          }
+                                        }}
+                                        className={`flex-1 bg-white border ${fieldError ? "border-red-500 ring-1 ring-red-500" : "border-[#E9ECEF]"} focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center`}
+                                      />
+                                    </div>
+                                    <div className="mt-1 text-xs text-[#6C757D] font-medium">
+                                      <span className="text-[#6C757D] ml-0.5">
+                                        ({paramCount})
+                                      </span>
+                                    </div>
+                                    {fieldError && (
+                                      <div className="text-xs text-red-500 mt-0.5">
+                                        {fieldError.message}
+                                      </div>
+                                    )}
+                                    <datalist id={`device-list-${index}`}>
+                                      {deviceOptions.map((opt, i) => (
+                                        <option key={i} value={opt} />
+                                      ))}
+                                    </datalist>
+                                  </td>
+                                );
+                              } else if (rowSpan === 1) {
+                                // Single row - render normally
+                                return (
+                                  <td
+                                    key={col.key}
+                                    className={`${col.width} px-2 py-2 text-center ${fieldError ? "border-l-2 border-red-500" : ""}`}
+                                  >
+                                    <div className="flex items-center gap-1">
+                                      <input
+                                        list={`device-list-${index}`}
+                                        type="text"
+                                        value={cellValue}
+                                        placeholder="Type or select device"
+                                        onChange={e => {
+                                          const val = e.target.value;
+                                          const duplicate =
+                                            checkDuplicateDeviceName(
+                                              val,
+                                              index
+                                            );
+
+                                          if (duplicate) {
+                                            // Show merge dialog
+                                            setMergeData({
+                                              currentIndex: index,
+                                              currentDevice:
+                                                rows[index]?.deviceName || "",
+                                              existingDevice:
+                                                duplicate.existingDevice,
+                                              newDeviceName: val.trim(),
+                                              rows: duplicate.existingRows,
+                                            });
+                                            setShowMergeDialog(true);
+                                          } else {
+                                            // Just update normally
+                                            updateCell(index, col.key, val);
+                                          }
+                                        }}
+                                        className={`flex-1 bg-white border ${fieldError ? "border-red-500 ring-1 ring-red-500" : "border-[#E9ECEF]"} focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center`}
+                                      />
+                                    </div>
+                                    <div className="mt-1 text-xs text-[#6C757D] font-medium">
+                                      P{index + 1}
+                                      <span className="text-[#6C757D] ml-0.5">
+                                        (1)
+                                      </span>
+                                    </div>
+                                    {fieldError && (
+                                      <div className="text-xs text-red-500 mt-0.5">
+                                        {fieldError.message}
+                                      </div>
+                                    )}
+                                    <datalist id={`device-list-${index}`}>
+                                      {deviceOptions.map((opt, i) => (
+                                        <option key={i} value={opt} />
+                                      ))}
+                                    </datalist>
+                                  </td>
+                                );
+                              } else {
+                                // Part of a merged group - skip rendering
+                                return null;
+                              }
+                            }
+
+                            if (col.key === "slaveId") {
+                              const rowSpan = slaveIdSpans.get(index);
+                              if (rowSpan && rowSpan > 1) {
+                                // This is the start of a group - render with rowSpan
+                                return (
+                                  <td
+                                    key={col.key}
+                                    rowSpan={rowSpan}
+                                    className={`${col.width} px-2 py-2 text-center align-top ${fieldError ? "border-l-2 border-red-500" : ""}`}
+                                  >
+                                    <select
+                                      value={cellValue}
+                                      onChange={e => {
+                                        updateCell(
+                                          index,
+                                          col.key,
+                                          e.target.value
+                                        );
+                                      }}
+                                      className={`w-full bg-white border ${fieldError ? "border-red-500 ring-1 ring-red-500" : "border-[#E9ECEF]"} focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer`}
+                                    >
+                                      {Array.from(
+                                        { length: 31 },
+                                        (_, i) => i + 1
+                                      ).map(id => (
+                                        <option key={id} value={id}>
+                                          {id}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    {fieldError && (
+                                      <div className="text-xs text-red-500 mt-0.5">
+                                        {fieldError.message}
+                                      </div>
+                                    )}
+                                  </td>
+                                );
+                              } else if (rowSpan === 1) {
+                                // Single row - render normally
+                                return (
+                                  <td
+                                    key={col.key}
+                                    className={`${col.width} px-2 py-2 text-center ${fieldError ? "border-l-2 border-red-500" : ""}`}
+                                  >
+                                    <select
+                                      value={cellValue}
+                                      onChange={e => {
+                                        updateCell(
+                                          index,
+                                          col.key,
+                                          e.target.value
+                                        );
+                                      }}
+                                      className={`w-full bg-white border ${fieldError ? "border-red-500 ring-1 ring-red-500" : "border-[#E9ECEF]"} focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer`}
+                                    >
+                                      {Array.from(
+                                        { length: 31 },
+                                        (_, i) => i + 1
+                                      ).map(id => (
+                                        <option key={id} value={id}>
+                                          {id}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    {fieldError && (
+                                      <div className="text-xs text-red-500 mt-0.5">
+                                        {fieldError.message}
+                                      </div>
+                                    )}
+                                  </td>
+                                );
+                              } else {
+                                // Part of a merged group - skip rendering
+                                return null;
+                              }
+                            }
+
+                            if (col.key === "parameterName") {
+                              return (
+                                <td
+                                  key={col.key}
+                                  className={`${col.width} px-2 py-2 text-center ${fieldError ? "border-l-2 border-red-500" : ""}`}
+                                >
+                                  <div className="flex items-center justify-center gap-1">
+                                    <input
+                                      type="text"
+                                      value={cellValue}
+                                      disabled
+                                      className={`flex-1 bg-[#F8F9FA] border ${fieldError ? "border-red-500 ring-1 ring-red-500" : "border-[#E9ECEF]"} px-2 py-1 text-sm text-[#6C757D] rounded-lg text-center cursor-not-allowed`}
+                                    />
+                                    <button
+                                      onClick={() => addRowWithDevice(index)}
+                                      disabled={
+                                        rows.length >= PARAMETERS_PER_GROUP
+                                      }
+                                      className="p-1 text-[#4361EE] hover:text-[#3A53D0] hover:bg-[#EEF0FE] rounded-lg transition-colors inline-flex items-center justify-center cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                      title="Add parameter to this device"
+                                    >
+                                      <Plus className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                  {fieldError && (
+                                    <div className="text-xs text-red-500 mt-0.5">
+                                      {fieldError.message}
+                                    </div>
+                                  )}
+                                </td>
+                              );
+                            }
+
                             return (
                               <td
                                 key={col.key}
-                                className={`${col.width} px-2 py-2 text-center`}
+                                className={`${col.width} px-2 py-2 text-center ${fieldError ? "border-l-2 border-red-500" : ""}`}
                               >
                                 <input
                                   type="text"
                                   value={cellValue}
-                                  disabled
-                                  className="w-full bg-[#F8F9FA] border border-[#E9ECEF] px-2 py-1 text-sm text-[#6C757D] rounded-lg text-center cursor-not-allowed"
-                                />
-                              </td>
-                            );
-                          }
-
-                          return (
-                            <td
-                              key={col.key}
-                              className={`${col.width} px-2 py-2 text-center`}
-                            >
-                              <input
-                                type="text"
-                                value={cellValue}
-                                onChange={e => {
-                                  const val = e.target.value;
-                                  if (col.type === "number") {
-                                    // Allow integers, decimals, negative signs, and empty inputs during typing
-                                    if (/^-?\d*\.?\d*$/.test(val)) {
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    if (col.type === "number") {
+                                      // Allow integers, decimals, negative signs, and empty inputs during typing
+                                      if (/^-?\d*\.?\d*$/.test(val)) {
+                                        updateCell(index, col.key, val);
+                                      }
+                                    } else {
                                       updateCell(index, col.key, val);
                                     }
-                                  } else {
-                                    updateCell(index, col.key, val);
-                                  }
-                                }}
-                                className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
-                              />
-                            </td>
-                          );
-                        })}
-                        <td className="w-16 px-2 py-2 text-center">
-                          <button
-                            onClick={() => removeRow(index)}
-                            className="p-1.5 text-[#ADB5BD] hover:text-[#DC3545] hover:bg-[#FDECEE] rounded-lg transition-colors inline-flex items-center justify-center cursor-pointer"
-                            title="Delete row"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                                  }}
+                                  className={`w-full bg-white border ${fieldError ? "border-red-500 ring-1 ring-red-500" : "border-[#E9ECEF]"} focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center`}
+                                />
+                                {fieldError && (
+                                  <div className="text-xs text-red-500 mt-0.5">
+                                    {fieldError.message}
+                                  </div>
+                                )}
+                              </td>
+                            );
+                          })}
+                          <td className="w-16 px-2 py-2 text-center">
+                            <button
+                              onClick={() => removeRow(index)}
+                              className="p-1.5 text-[#ADB5BD] hover:text-[#DC3545] hover:bg-[#FDECEE] rounded-lg transition-colors inline-flex items-center justify-center cursor-pointer"
+                              title="Delete row"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1817,6 +2226,11 @@ export default function GatewayDetail() {
                 <span className="ml-4 text-xs text-[#6C757D]">
                   {getActiveGroupData().publishRows.length} /{" "}
                   {PARAMETERS_PER_GROUP}
+                </span>
+                <span className="ml-4 text-xs text-[#4361EE] font-medium flex items-center gap-1">
+                  <NotebookPen className="w-3 h-3" />
+                  Total: {getActiveGroupData().publishRows.length} parameter
+                  {getActiveGroupData().publishRows.length !== 1 ? "s" : ""}
                 </span>
                 <div className="flex justify-end">
                   <Button
@@ -1839,14 +2253,6 @@ export default function GatewayDetail() {
                       : publishing
                         ? `Writing batch ${publishProgress.current}/${publishProgress.total}`
                         : "Write to Gateway"}
-                  </Button>
-                  <Button
-                    onClick={handleSave}
-                    disabled={getActiveGroupData().publishRows.length === 0}
-                    className="h-10 px-5 bg-[#4361EE] hover:bg-[#3A53D0] text-white disabled:opacity-50 cursor-pointer ml-2"
-                  >
-                    <Save className="w-4 h-4 mr-2" />
-                    Save
                   </Button>
                 </div>
               </div>
@@ -1902,226 +2308,31 @@ export default function GatewayDetail() {
                         </td>
                       </tr>
                     )}
-                    {getActiveGroupData().readRows.map((row, index) => (
-                      <tr
-                        key={index}
-                        className="hover:bg-[#F8F9FA] transition-colors"
-                      >
-                        {TABLE_COLUMNS.map(col => {
-                          const cellValue = row[col.key] ?? "";
+                    {getActiveGroupData().readRows.map((row, index) => {
+                      const rows = getActiveGroupData().readRows;
+                      return (
+                        <tr
+                          key={index}
+                          className="hover:bg-[#F8F9FA] transition-colors"
+                        >
+                          {TABLE_COLUMNS.map(col => {
+                            const cellValue = row[col.key] ?? "";
 
-                          // Handle serial number column (read-only, auto-increment)
-                          if (col.isSerial) {
-                            return (
-                              <td
-                                key={col.key}
-                                className={`${col.width} px-2 py-2 text-center`}
-                              >
-                                <span className="text-sm text-[#212529] font-medium">
-                                  {index + 1}
-                                </span>
-                              </td>
-                            );
-                          }
-
-                          if (col.key === "dataType") {
-                            return (
-                              <td
-                                key={col.key}
-                                className={`${col.width} px-2 py-2 text-center`}
-                              >
-                                <select
-                                  value={cellValue}
-                                  onChange={e =>
-                                    updateCell(index, col.key, e.target.value)
-                                  }
-                                  className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
-                                >
-                                  <option value="Int">Int</option>
-                                  <option value="Float">Float</option>
-                                </select>
-                              </td>
-                            );
-                          }
-
-                          if (col.key === "serialFormat") {
-                            return (
-                              <td
-                                key={col.key}
-                                className={`${col.width} px-2 py-2 text-center`}
-                              >
-                                <select
-                                  value={cellValue}
-                                  onChange={e =>
-                                    updateCell(index, col.key, e.target.value)
-                                  }
-                                  className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] font-mono text-center [text-align-last:center] rounded-lg cursor-pointer"
-                                >
-                                  {SERIAL_FORMAT_OPTIONS.map(option => (
-                                    <option
-                                      key={option.value}
-                                      value={option.value}
-                                      title={option.label}
-                                    >
-                                      {option.value}
-                                    </option>
-                                  ))}
-                                </select>
-                              </td>
-                            );
-                          }
-
-                          if (col.key === "functionCode") {
-                            return (
-                              <td
-                                key={col.key}
-                                className={`${col.width} px-2 py-2 text-center`}
-                              >
-                                <select
-                                  value={cellValue}
-                                  onChange={e =>
-                                    updateCell(index, col.key, e.target.value)
-                                  }
-                                  className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] font-mono text-center [text-align-last:center] rounded-lg cursor-pointer"
-                                >
-                                  <option value="1">1 (Coils)</option>
-                                  <option value="2">2 (Inputs)</option>
-                                  <option value="3">3 (Holding)</option>
-                                  <option value="4">4 (Input Reg)</option>
-                                  <option value="5">5 (Write Coil)</option>
-                                  <option value="6">6 (Write Reg)</option>
-                                  <option value="15">15 (Write Coils)</option>
-                                  <option value="16">16 (Write Regs)</option>
-                                </select>
-                              </td>
-                            );
-                          }
-
-                          if (col.key === "deviceName") {
-                            const rowSpan = deviceNameSpans.get(index);
-                            if (rowSpan && rowSpan > 1) {
-                              // This is the start of a group - render with rowSpan
-                              return (
-                                <td
-                                  key={col.key}
-                                  rowSpan={rowSpan}
-                                  className={`${col.width} px-2 py-2 text-center align-top`}
-                                >
-                                  <div className="flex items-center gap-1">
-                                    <input
-                                      list={`device-list-${index}`}
-                                      type="text"
-                                      value={cellValue}
-                                      placeholder="Type or select device"
-                                      onChange={e => {
-                                        const val = e.target.value;
-                                        updateCell(index, col.key, val);
-                                      }}
-                                      className="flex-1 bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
-                                    />
-                                    <button
-                                      onClick={() => addRowToDevice(index)}
-                                      disabled={
-                                        (activeView === "publish"
-                                          ? getActiveGroupData().publishRows
-                                              .length
-                                          : getActiveGroupData().readRows
-                                              .length) >= PARAMETERS_PER_GROUP
-                                      }
-                                      className="p-1 text-[#4361EE] hover:text-[#3A53D0] hover:bg-[#EEF0FE] rounded transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                                      title="Add parameter for this device"
-                                    >
-                                      <Plus className="w-4 h-4" />
-                                    </button>
-                                  </div>
-                                  <datalist id={`device-list-${index}`}>
-                                    {deviceOptions.map((opt, i) => (
-                                      <option key={i} value={opt} />
-                                    ))}
-                                  </datalist>
-                                </td>
-                              );
-                            } else if (rowSpan === 1) {
-                              // Single row - render normally
+                            // Handle serial number column (read-only, auto-increment)
+                            if (col.isSerial) {
                               return (
                                 <td
                                   key={col.key}
                                   className={`${col.width} px-2 py-2 text-center`}
                                 >
-                                  <div className="flex items-center gap-1">
-                                    <input
-                                      list={`device-list-${index}`}
-                                      type="text"
-                                      value={cellValue}
-                                      placeholder="Type or select device"
-                                      onChange={e => {
-                                        const val = e.target.value;
-                                        updateCell(index, col.key, val);
-                                      }}
-                                      className="flex-1 bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
-                                    />
-                                    <button
-                                      onClick={() => addRowToDevice(index)}
-                                      disabled={
-                                        (activeView === "publish"
-                                          ? getActiveGroupData().publishRows
-                                              .length
-                                          : getActiveGroupData().readRows
-                                              .length) >= PARAMETERS_PER_GROUP
-                                      }
-                                      className="p-1 text-[#4361EE] hover:text-[#3A53D0] hover:bg-[#EEF0FE] rounded transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                                      title="Add parameter for this device"
-                                    >
-                                      <Plus className="w-4 h-4" />
-                                    </button>
-                                  </div>
-                                  <datalist id={`device-list-${index}`}>
-                                    {deviceOptions.map((opt, i) => (
-                                      <option key={i} value={opt} />
-                                    ))}
-                                  </datalist>
+                                  <span className="text-sm text-[#212529] font-medium">
+                                    {index + 1}
+                                  </span>
                                 </td>
                               );
-                            } else {
-                              // Part of a merged group - skip rendering
-                              return null;
                             }
-                          }
 
-                          if (col.key === "slaveId") {
-                            const rowSpan = slaveIdSpans.get(index);
-                            if (rowSpan && rowSpan > 1) {
-                              // This is the start of a group - render with rowSpan
-                              return (
-                                <td
-                                  key={col.key}
-                                  rowSpan={rowSpan}
-                                  className={`${col.width} px-2 py-2 text-center align-middle`}
-                                >
-                                  <select
-                                    value={cellValue}
-                                    onChange={e => {
-                                      updateCell(
-                                        index,
-                                        col.key,
-                                        e.target.value
-                                      );
-                                    }}
-                                    className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
-                                  >
-                                    {Array.from(
-                                      { length: 31 },
-                                      (_, i) => i + 1
-                                    ).map(id => (
-                                      <option key={id} value={id}>
-                                        {id}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </td>
-                              );
-                            } else if (rowSpan === 1) {
-                              // Single row - render normally
+                            if (col.key === "dataType") {
                               return (
                                 <td
                                   key={col.key}
@@ -2129,33 +2340,313 @@ export default function GatewayDetail() {
                                 >
                                   <select
                                     value={cellValue}
-                                    onChange={e => {
-                                      updateCell(
-                                        index,
-                                        col.key,
-                                        e.target.value
-                                      );
-                                    }}
+                                    onChange={e =>
+                                      updateCell(index, col.key, e.target.value)
+                                    }
                                     className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
                                   >
-                                    {Array.from(
-                                      { length: 31 },
-                                      (_, i) => i + 1
-                                    ).map(id => (
-                                      <option key={id} value={id}>
-                                        {id}
+                                    <option value="Int">Int</option>
+                                    <option value="Float">Float</option>
+                                  </select>
+                                </td>
+                              );
+                            }
+
+                            if (col.key === "serialFormat") {
+                              return (
+                                <td
+                                  key={col.key}
+                                  className={`${col.width} px-2 py-2 text-center`}
+                                >
+                                  <select
+                                    value={cellValue}
+                                    onChange={e =>
+                                      updateCell(index, col.key, e.target.value)
+                                    }
+                                    className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] font-mono text-center [text-align-last:center] rounded-lg cursor-pointer"
+                                  >
+                                    {SERIAL_FORMAT_OPTIONS.map(option => (
+                                      <option
+                                        key={option.value}
+                                        value={option.value}
+                                        title={option.label}
+                                      >
+                                        {option.value}
                                       </option>
                                     ))}
                                   </select>
                                 </td>
                               );
-                            } else {
-                              // Part of a merged group - skip rendering
-                              return null;
                             }
-                          }
 
-                          if (col.key === "parameterName") {
+                            if (col.key === "functionCode") {
+                              return (
+                                <td
+                                  key={col.key}
+                                  className={`${col.width} px-2 py-2 text-center`}
+                                >
+                                  <select
+                                    value={cellValue}
+                                    onChange={e =>
+                                      updateCell(index, col.key, e.target.value)
+                                    }
+                                    className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] font-mono text-center [text-align-last:center] rounded-lg cursor-pointer"
+                                  >
+                                    <option value="1">1 (Coils)</option>
+                                    <option value="2">2 (Inputs)</option>
+                                    <option value="3">3 (Holding)</option>
+                                    <option value="4">4 (Input Reg)</option>
+                                    <option value="5">5 (Write Coil)</option>
+                                    <option value="6">6 (Write Reg)</option>
+                                    <option value="15">15 (Write Coils)</option>
+                                    <option value="16">16 (Write Regs)</option>
+                                  </select>
+                                </td>
+                              );
+                            }
+
+                            if (col.key === "decimal") {
+                              return (
+                                <td
+                                  key={col.key}
+                                  className={`${col.width} px-2 py-2 text-center`}
+                                >
+                                  <select
+                                    value={cellValue}
+                                    onChange={e =>
+                                      updateCell(
+                                        index,
+                                        col.key,
+                                        parseInt(e.target.value) || 0
+                                      )
+                                    }
+                                    className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
+                                  >
+                                    <option value="0">0 (None)</option>
+                                    <option value="1">1</option>
+                                    <option value="2">2</option>
+                                  </select>
+                                </td>
+                              );
+                            }
+
+                            if (col.key === "deviceName") {
+                              const rowSpan = deviceNameSpans.get(index);
+                              if (rowSpan && rowSpan > 1) {
+                                // This is the start of a group - render with rowSpan
+                                // Calculate parameter range for this device
+                                let paramStart = index + 1;
+                                let paramEnd = index + rowSpan;
+                                const paramCount = rowSpan;
+
+                                return (
+                                  <td
+                                    key={col.key}
+                                    rowSpan={rowSpan}
+                                    className={`${col.width} px-2 py-2 text-center align-top`}
+                                  >
+                                    <div className="flex items-center gap-1">
+                                      <input
+                                        list={`device-list-${index}`}
+                                        type="text"
+                                        value={cellValue}
+                                        placeholder="Type or select device"
+                                        onChange={e => {
+                                          const val = e.target.value;
+                                          const duplicate =
+                                            checkDuplicateDeviceName(
+                                              val,
+                                              index
+                                            );
+
+                                          if (duplicate) {
+                                            // Show merge dialog
+                                            setMergeData({
+                                              currentIndex: index,
+                                              currentDevice:
+                                                rows[index]?.deviceName || "",
+                                              existingDevice:
+                                                duplicate.existingDevice,
+                                              newDeviceName: val.trim(),
+                                              rows: duplicate.existingRows,
+                                            });
+                                            setShowMergeDialog(true);
+                                          } else {
+                                            // Just update normally
+                                            updateCell(index, col.key, val);
+                                          }
+                                        }}
+                                        className="flex-1 bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
+                                      />
+                                    </div>
+                                    <div className="mt-1 text-xs text-[#6C757D] font-medium">
+                                      P{paramStart}–P{paramEnd}
+                                      <span className="text-[#6C757D] ml-0.5">
+                                        ({paramCount})
+                                      </span>
+                                    </div>
+                                    <datalist id={`device-list-${index}`}>
+                                      {deviceOptions.map((opt, i) => (
+                                        <option key={i} value={opt} />
+                                      ))}
+                                    </datalist>
+                                  </td>
+                                );
+                              } else if (rowSpan === 1) {
+                                // Single row - render normally
+                                return (
+                                  <td
+                                    key={col.key}
+                                    className={`${col.width} px-2 py-2 text-center`}
+                                  >
+                                    <div className="flex items-center gap-1">
+                                      <input
+                                        list={`device-list-${index}`}
+                                        type="text"
+                                        value={cellValue}
+                                        placeholder="Type or select device"
+                                        onChange={e => {
+                                          const val = e.target.value;
+                                          const duplicate =
+                                            checkDuplicateDeviceName(
+                                              val,
+                                              index
+                                            );
+
+                                          if (duplicate) {
+                                            // Show merge dialog
+                                            setMergeData({
+                                              currentIndex: index,
+                                              currentDevice:
+                                                rows[index]?.deviceName || "",
+                                              existingDevice:
+                                                duplicate.existingDevice,
+                                              newDeviceName: val.trim(),
+                                              rows: duplicate.existingRows,
+                                            });
+                                            setShowMergeDialog(true);
+                                          } else {
+                                            // Just update normally
+                                            updateCell(index, col.key, val);
+                                          }
+                                        }}
+                                        className="flex-1 bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
+                                      />
+                                    </div>
+                                    <div className="mt-1 text-xs text-[#6C757D] font-medium">
+                                      P{index + 1}
+                                      <span className="text-[#6C757D] ml-0.5">
+                                        (1)
+                                      </span>
+                                    </div>
+                                    <datalist id={`device-list-${index}`}>
+                                      {deviceOptions.map((opt, i) => (
+                                        <option key={i} value={opt} />
+                                      ))}
+                                    </datalist>
+                                  </td>
+                                );
+                              } else {
+                                // Part of a merged group - skip rendering
+                                return null;
+                              }
+                            }
+
+                            if (col.key === "slaveId") {
+                              const rowSpan = slaveIdSpans.get(index);
+                              if (rowSpan && rowSpan > 1) {
+                                // This is the start of a group - render with rowSpan
+                                return (
+                                  <td
+                                    key={col.key}
+                                    rowSpan={rowSpan}
+                                    className={`${col.width} px-2 py-2 text-center align-middle`}
+                                  >
+                                    <select
+                                      value={cellValue}
+                                      onChange={e => {
+                                        updateCell(
+                                          index,
+                                          col.key,
+                                          e.target.value
+                                        );
+                                      }}
+                                      className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
+                                    >
+                                      {Array.from(
+                                        { length: 31 },
+                                        (_, i) => i + 1
+                                      ).map(id => (
+                                        <option key={id} value={id}>
+                                          {id}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </td>
+                                );
+                              } else if (rowSpan === 1) {
+                                // Single row - render normally
+                                return (
+                                  <td
+                                    key={col.key}
+                                    className={`${col.width} px-2 py-2 text-center`}
+                                  >
+                                    <select
+                                      value={cellValue}
+                                      onChange={e => {
+                                        updateCell(
+                                          index,
+                                          col.key,
+                                          e.target.value
+                                        );
+                                      }}
+                                      className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center [text-align-last:center] cursor-pointer"
+                                    >
+                                      {Array.from(
+                                        { length: 31 },
+                                        (_, i) => i + 1
+                                      ).map(id => (
+                                        <option key={id} value={id}>
+                                          {id}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </td>
+                                );
+                              } else {
+                                // Part of a merged group - skip rendering
+                                return null;
+                              }
+                            }
+
+                            if (col.key === "parameterName") {
+                              return (
+                                <td
+                                  key={col.key}
+                                  className={`${col.width} px-2 py-2 text-center`}
+                                >
+                                  <div className="flex items-center justify-center gap-1">
+                                    <input
+                                      type="text"
+                                      value={cellValue}
+                                      disabled
+                                      className="flex-1 bg-[#F8F9FA] border border-[#E9ECEF] px-2 py-1 text-sm text-[#6C757D] rounded-lg text-center cursor-not-allowed"
+                                    />
+                                    <button
+                                      onClick={() => addRowWithDevice(index)}
+                                      disabled={
+                                        rows.length >= PARAMETERS_PER_GROUP
+                                      }
+                                      className="p-1 text-[#4361EE] hover:text-[#3A53D0] hover:bg-[#EEF0FE] rounded-lg transition-colors inline-flex items-center justify-center cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                      title="Add parameter to this device"
+                                    >
+                                      <Plus className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </td>
+                              );
+                            }
+
                             return (
                               <td
                                 key={col.key}
@@ -2164,48 +2655,34 @@ export default function GatewayDetail() {
                                 <input
                                   type="text"
                                   value={cellValue}
-                                  disabled
-                                  className="w-full bg-[#F8F9FA] border border-[#E9ECEF] px-2 py-1 text-sm text-[#6C757D] rounded-lg text-center cursor-not-allowed"
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    if (col.type === "number") {
+                                      // Allow integers, decimals, negative signs, and empty inputs during typing
+                                      if (/^-?\d*\.?\d*$/.test(val)) {
+                                        updateCell(index, col.key, val);
+                                      }
+                                    } else {
+                                      updateCell(index, col.key, val);
+                                    }
+                                  }}
+                                  className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
                                 />
                               </td>
                             );
-                          }
-
-                          return (
-                            <td
-                              key={col.key}
-                              className={`${col.width} px-2 py-2 text-center`}
+                          })}
+                          <td className="w-16 px-2 py-2 text-center">
+                            <button
+                              onClick={() => removeRow(index)}
+                              className="p-1.5 text-[#ADB5BD] hover:text-[#DC3545] hover:bg-[#FDECEE] rounded-lg transition-colors inline-flex items-center justify-center cursor-pointer"
+                              title="Delete row"
                             >
-                              <input
-                                type="text"
-                                value={cellValue}
-                                onChange={e => {
-                                  const val = e.target.value;
-                                  if (col.type === "number") {
-                                    // Allow integers, decimals, negative signs, and empty inputs during typing
-                                    if (/^-?\d*\.?\d*$/.test(val)) {
-                                      updateCell(index, col.key, val);
-                                    }
-                                  } else {
-                                    updateCell(index, col.key, val);
-                                  }
-                                }}
-                                className="w-full bg-white border border-[#E9ECEF] focus:border-[#4361EE] focus:ring-1 focus:ring-[#EEF0FE] focus:outline-none px-2 py-1 text-sm text-[#212529] rounded-lg text-center"
-                              />
-                            </td>
-                          );
-                        })}
-                        <td className="w-16 px-2 py-2 text-center">
-                          <button
-                            onClick={() => removeRow(index)}
-                            className="p-1.5 text-[#ADB5BD] hover:text-[#DC3545] hover:bg-[#FDECEE] rounded-lg transition-colors inline-flex items-center justify-center cursor-pointer"
-                            title="Delete row"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -2222,9 +2699,29 @@ export default function GatewayDetail() {
                   <Plus className="w-4 h-4" />
                   Add Row
                 </button>
+                {getActiveGroupData().readRows.length > 0 && (
+                  <button
+                    onClick={() =>
+                      addRowToDevice(getActiveGroupData().readRows.length - 1)
+                    }
+                    disabled={
+                      getActiveGroupData().readRows.length >=
+                      PARAMETERS_PER_GROUP
+                    }
+                    className="ml-4 inline-flex items-center gap-1.5 text-sm text-[#4361EE] hover:text-[#3A53D0] font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add Parameter to Last Device
+                  </button>
+                )}
                 <span className="ml-4 text-xs text-[#6C757D]">
                   {getActiveGroupData().readRows.length} /{" "}
                   {PARAMETERS_PER_GROUP}
+                </span>
+                <span className="ml-4 text-xs text-[#4361EE] font-medium flex items-center gap-1">
+                  <BookOpen className="w-3 h-3" />
+                  Total: {getActiveGroupData().readRows.length} parameter
+                  {getActiveGroupData().readRows.length !== 1 ? "s" : ""}
                 </span>
                 <div className="flex justify-end">
                   <Button
@@ -2278,16 +2775,6 @@ export default function GatewayDetail() {
               </div>
 
               {/* WiFi Response Display */}
-
-              {/* {wifiResponse && (
-                <div className="bg-white border border-[#E9ECEF] rounded-xl p-4 shadow-sm">
-                  <h3 className="text-sm font-semibold text-[#212529] mb-2">
-                  </h3>
-                  <pre className="bg-[#F8F9FA] border border-[#E9ECEF] rounded-lg p-3 text-sm text-[#212529] font-mono overflow-x-auto">
-                    {wifiResponse}
-                  </pre>
-                </div>
-              )} */}
               {wifiResponse &&
                 (() => {
                   const [ssid, password] = wifiResponse.split(",");
@@ -2451,6 +2938,91 @@ export default function GatewayDetail() {
             </div>
           )}
         </div>
+
+        {/* Merge Confirmation Dialog */}
+        {showMergeDialog && mergeData && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-fadeIn">
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 p-6">
+              <div className="flex items-start gap-3 mb-4">
+                <div className="p-2 bg-amber-50 rounded-lg">
+                  <AlertCircle className="w-6 h-6 text-amber-500" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-[#212529]">
+                    Merge Devices?
+                  </h3>
+                  <p className="text-sm text-[#6C757D] mt-1">
+                    Device name <strong>"{mergeData.newDeviceName}"</strong>{" "}
+                    already exists.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-[#F8F9FA] rounded-lg p-4 mb-4">
+                <div className="text-sm">
+                  <div className="flex items-center justify-between py-1 border-b border-[#E9ECEF]">
+                    <span className="text-[#6C757D]">Current Device</span>
+                    <span className="font-medium text-[#212529]">
+                      {mergeData.currentDevice || "(empty)"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between py-1">
+                    <span className="text-[#6C757D]">Existing Device</span>
+                    <span className="font-medium text-[#212529]">
+                      {mergeData.existingDevice}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between py-1 border-t border-[#E9ECEF] mt-1 pt-1">
+                    <span className="text-[#6C757D]">
+                      Parameters in existing device
+                    </span>
+                    <span className="font-medium text-[#212529]">
+                      {mergeData.rows.length}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-sm text-[#6C757D] mb-4">
+                Merging will combine all parameters under the same device name.
+                {mergeData.rows.length > 0 &&
+                  ` ${mergeData.rows.length} existing parameter(s) will be grouped together.`}
+              </p>
+
+              <div className="flex items-center gap-3">
+                <Button
+                  onClick={() => {
+                    // Merge: Update device name and group all rows
+                    mergeDevices(
+                      mergeData.currentIndex,
+                      mergeData.newDeviceName
+                    );
+                    setShowMergeDialog(false);
+                    setMergeData(null);
+                    toast.success(
+                      `✅ Merged "${mergeData.newDeviceName}" devices`
+                    );
+                  }}
+                  className="flex-1 h-10 bg-[#4361EE] hover:bg-[#3A53D0] text-white cursor-pointer"
+                >
+                  <Check className="w-4 h-4 mr-2" />
+                  Yes, Merge
+                </Button>
+                <Button
+                  onClick={() => {
+                    // Cancel: Revert to original value
+                    setShowMergeDialog(false);
+                    setMergeData(null);
+                  }}
+                  variant="ghost"
+                  className="h-10 px-3 text-[#6C757D] hover:bg-[#F8F9FA] cursor-pointer"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
